@@ -1,5 +1,7 @@
+use alloc::format;
 use core::fmt;
 
+use nu_ansi_term::Color;
 use rustix::io::write;
 use rustix::stdio::stdout;
 use tracing::{Event, Level, Metadata, span, subscriber::Subscriber};
@@ -13,11 +15,9 @@ impl LinuxSubscriber {
         Self { max_level }
     }
 
-    // Helper to write to Linux stdout via rustix
     fn write_to_stdout(&self, s: &str) {
         let mut bytes = s.as_bytes();
         while !bytes.is_empty() {
-            // rustix handles the raw syscall
             if let Ok(n) = write(unsafe { stdout() }, bytes) {
                 bytes = &bytes[n..];
             } else {
@@ -36,13 +36,26 @@ impl Subscriber for LinuxSubscriber {
         let mut buf = alloc::string::String::new();
         let meta = event.metadata();
 
-        // Format: [LEVEL] target:
+        let level = match *meta.level() {
+            Level::TRACE => Color::Purple.paint("TRACE"),
+            Level::DEBUG => Color::Blue.paint("DEBUG"),
+            Level::INFO => Color::Green.paint("INFO"),
+            Level::WARN => Color::Yellow.paint("WARN"),
+            Level::ERROR => Color::Red.paint("ERROR"),
+        };
         let _ = fmt::write(
             &mut buf,
-            format_args!("[{}] {}: ", meta.level(), meta.target()),
+            format_args!(
+                "{} {} ",
+                level,
+                Color::Fixed(245).paint(format!(
+                    "{}:{}:",
+                    meta.target(),
+                    meta.line().unwrap_or_default()
+                )),
+            ),
         );
 
-        // Use a visitor to extract fields (message, variables)
         struct Visitor<'a>(&'a mut alloc::string::String);
         impl<'a> tracing::field::Visit for Visitor<'a> {
             fn record_debug(
@@ -52,7 +65,7 @@ impl Subscriber for LinuxSubscriber {
             ) {
                 let _ = match field.name() {
                     "message" => {
-                        fmt::write(self.0, format_args!(" {:?}", value))
+                        fmt::write(self.0, format_args!("{:?}", value))
                     }
                     other => fmt::write(
                         self.0,
@@ -69,7 +82,6 @@ impl Subscriber for LinuxSubscriber {
         self.write_to_stdout(&buf);
     }
 
-    // Minimal implementations required for the trait
     fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
         span::Id::from_u64(1)
     }

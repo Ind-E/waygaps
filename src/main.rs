@@ -6,9 +6,10 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::{ffi::CStr, sync::atomic::AtomicBool};
 
-use ::tracing::{Level, info, subscriber::set_global_default, trace};
 use rustix::{self, fd::OwnedFd};
-use tracing::{debug, error};
+use tracing::{
+    Level, debug, error, info, subscriber::set_global_default, trace,
+};
 use waybackend::{objman, types::ObjectId};
 
 use crate::{
@@ -103,7 +104,7 @@ pub extern "C" fn origin_main(
 ) -> core::ffi::c_int {
     unsafe { environ = envp.cast() };
 
-    let subscriber = LinuxSubscriber::new(Level::INFO);
+    let subscriber = LinuxSubscriber::new(Level::TRACE);
     set_global_default(subscriber).unwrap();
 
     let (mut backend, mut objman, mut receiver) =

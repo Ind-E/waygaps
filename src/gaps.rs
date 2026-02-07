@@ -1,3 +1,7 @@
+use alloc::{string::String, vec::Vec};
+
+use serde::Deserialize;
+
 use crate::wayland;
 
 #[derive(Debug, PartialEq)]
@@ -8,7 +12,7 @@ pub enum CornerEvent {
     // Scroll(Axis, f64),
 }
 
-#[derive(Clone, Debug, knus::Decode)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct GapConfig {
     pub output: Option<String>,
     pub enter_command: Vec<String>,
@@ -21,7 +25,7 @@ pub struct GapConfig {
     pub color: u32,
 }
 
-#[derive(Clone, Debug, knus::DecodeScalar)]
+#[derive(Clone, Debug, Deserialize)]
 pub enum Anchor {
     TopLeft,
     TopRight,

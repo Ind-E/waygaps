@@ -1,7 +1,6 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    systems.url = "github:nix-systems/default";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -11,128 +10,112 @@
   outputs =
     {
       nixpkgs,
-      systems,
       rust-overlay,
       ...
     }:
     let
-      # frostbar-package =
-      #   {
-      #     pkgs,
-      #     lib,
-      #     rustPlatform,
-      #     makeWrapper,
-      #   }:
-      #   rustPlatform.buildRustPackage {
-      #     pname = "frostbar";
-      #     inherit ((fromTOML (builtins.readFile ./Cargo.toml)).package) version;
-      #
-      #     strictDeps = true;
-      #
-      #     src = lib.fileset.toSource {
-      #       root = ./.;
-      #       fileset = lib.fileset.unions [
-      #         ./src
-      #         ./Cargo.toml
-      #         ./Cargo.lock
-      #       ];
-      #     };
-      #
-      #     cargoLock = {
-      #       lockFile = ./Cargo.lock;
-      #       allowBuiltinFetchGit = true;
-      #     };
-      #
-      #     nativeBuildInputs = with pkgs; [
-      #       pkg-config
-      #       rustPlatform.bindgenHook
-      #       makeWrapper
-      #     ];
-      #
-      #     buildInputs = with pkgs; [
-      #       openssl
-      #       pipewire
-      #     ];
-      #
-      #     postInstall = ''
-      #       wrapProgram $out/bin/frostbar \
-      #       --set LD_LIBRARY_PATH ${lib.makeLibraryPath (dlopenLibraries pkgs)}
-      #     '';
-      #
-      #     env.RUSTFLAGS = RUSTFLAGS pkgs;
-      #
-      #   };
-
       inherit (nixpkgs) lib;
 
-      dlopenLibraries =
-        pkgs: with pkgs; [
-          libxkbcommon
-          vulkan-loader
-          wayland
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ (import rust-overlay) ];
+      };
+
+      runtimeLibs = with pkgs; [
+        libxkbcommon
+        vulkan-loader
+        wayland
+      ];
+
+      commonNativeBuildInputs = with pkgs; [
+        pkg-config
+      ];
+
+      commonBuildInputs = with pkgs; [
+        wayland-protocols
+        wayland-scanner
+      ];
+
+      rust-toolchain = pkgs.rust-bin.nightly.latest.default.override {
+        extensions = [
+          "rust-src"
         ];
+      };
+      rust-toolchain-dev = rust-toolchain.override {
+        extensions = [
+          "rust-src"
+          "rust-analyzer"
+        ];
+      };
 
-      RUSTFLAGS = pkgs: "-C link-arg=-Wl,-rpath,${lib.makeLibraryPath (dlopenLibraries pkgs)}";
+      rustPlatform = pkgs.makeRustPlatform {
+        rustc = rust-toolchain;
+        cargo = rust-toolchain;
+      };
 
-      eachSystem = lib.genAttrs (import systems);
-      pkgsFor = nixpkgs.legacyPackages;
+      env = {
+        RUSTFLAGS = toString [
+          "-C link-arg=-Wl,-rpath,${lib.makeLibraryPath runtimeLibs}"
+          "-C panic=abort"
+        ];
+        CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
+        CARGO_UNSTABLE_BUILD_STD = "core,alloc,panic_abort";
+      };
+
+      Cargo.toml = (fromTOML (builtins.readFile ./Cargo.toml)).package;
+
+      waygaps = rustPlatform.buildRustPackage {
+        pname = Cargo.toml.name;
+        inherit (Cargo.toml) version;
+        inherit env;
+
+        strictDeps = true;
+
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            ./src
+            ./build.rs
+            ./Cargo.toml
+            ./Cargo.lock
+            ./protocols
+          ];
+        };
+
+        doCheck = false;
+
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+        };
+
+        nativeBuildInputs = commonNativeBuildInputs ++ [ pkgs.makeWrapper ];
+
+        buildInputs = commonBuildInputs;
+
+        postInstall = ''
+          wrapProgram $out/bin/waygaps \
+          --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
+        '';
+
+      };
+
     in
     {
-      devShells = eachSystem (
-        system:
-        let
-          pkgs = pkgsFor.${system};
-          rust-bin = rust-overlay.lib.mkRustBin { } pkgs;
-        in
-        {
-          default = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [
-              (rust-bin.stable.latest.default.override {
-                extensions = [
-                  "rust-src"
-                  "rust-analyzer"
-                ];
-              })
+      devShells.${system}.default = pkgs.mkShell {
+        inherit env;
 
-              pkg-config
-              wayland-scanner
-              wayland-protocols
-            ];
+        nativeBuildInputs = commonNativeBuildInputs ++ [ rust-toolchain-dev ];
+        buildInputs = commonBuildInputs;
+      };
 
-            buildInputs = with pkgs; [
-              pipewire
-            ];
+      packages.${system} = {
+        inherit waygaps;
+        default = waygaps;
+      };
 
-            env.RUSTFLAGS = RUSTFLAGS pkgs;
-          };
-        }
-      );
-
-      # packages = eachSystem (
-      #   system:
-      #   let
-      #     pkgs = pkgsFor.${system};
-      #     frostbar = pkgs.callPackage frostbar-package { };
-      #   in
-      #   {
-      #     inherit frostbar;
-      #     default = frostbar;
-      #
-      #     frostbar-debug = frostbar.overrideAttrs (
-      #       final: prev: {
-      #         pname = prev.pname + "-debug";
-      #
-      #         cargoBuildType = "debug";
-      #         cargoCheckType = final.cargoBuildType;
-      #
-      #         dontStrip = true;
-      #       }
-      #     );
-      #   }
-      # );
-
-      # overlays.default = final: _: {
-      #   frostbar = final.callPackage frostbar-package { };
-      # };
+      overlays.default = final: _: {
+        inherit waygaps;
+      };
     };
 }

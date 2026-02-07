@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use waybackend_scanner::WaylandProtocol;
 
 fn main() {
+    println!("cargo:rustc-link-arg=-nostartfiles");
+
     let out_dir = std::env::var_os("OUT_DIR").expect("missing OUT_DIR environment variable");
 
     let mut filepath = PathBuf::from(out_dir);

@@ -1,8 +1,6 @@
-use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
-
-use waybackend::{Waybackend, objman::ObjectManager, types::ObjectId};
-
 use rustix::{self, fd::OwnedFd};
+use waybackend::{Waybackend, objman::ObjectManager, types::ObjectId};
+use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
 
 use crate::{
     gaps::{Anchor, GapConfig},
@@ -49,7 +47,11 @@ impl Surface {
         config: GapConfig,
     ) -> rustix::io::Result<Self> {
         let wl_surface = objman.create(WaylandObject::Surface);
-        wayland::wl_compositor::req::create_surface(backend, wl_compositor, wl_surface)?;
+        wayland::wl_compositor::req::create_surface(
+            backend,
+            wl_compositor,
+            wl_surface,
+        )?;
 
         let layer_surface = objman.create(WaylandObject::LayerSurface);
         wayland::zwlr_layer_shell_v1::req::get_layer_surface(
@@ -63,8 +65,12 @@ impl Surface {
         )?;
 
         let (anchor, width, height) = match config.anchor {
-            Anchor::TopLeft => (wlrAnchor::LEFT | wlrAnchor::TOP, config.size, config.size),
-            Anchor::TopRight => (wlrAnchor::RIGHT | wlrAnchor::TOP, config.size, config.size),
+            Anchor::TopLeft => {
+                (wlrAnchor::LEFT | wlrAnchor::TOP, config.size, config.size)
+            }
+            Anchor::TopRight => {
+                (wlrAnchor::RIGHT | wlrAnchor::TOP, config.size, config.size)
+            }
             Anchor::BottomRight => (
                 wlrAnchor::RIGHT | wlrAnchor::BOTTOM,
                 config.size,
@@ -81,8 +87,17 @@ impl Surface {
             Anchor::Bottom => (wlrAnchor::BOTTOM, 0, config.size),
         };
 
-        wayland::zwlr_layer_surface_v1::req::set_anchor(backend, layer_surface, anchor)?;
-        wayland::zwlr_layer_surface_v1::req::set_size(backend, layer_surface, width, height)?;
+        wayland::zwlr_layer_surface_v1::req::set_anchor(
+            backend,
+            layer_surface,
+            anchor,
+        )?;
+        wayland::zwlr_layer_surface_v1::req::set_size(
+            backend,
+            layer_surface,
+            width,
+            height,
+        )?;
 
         Ok(Self {
             registry_name,

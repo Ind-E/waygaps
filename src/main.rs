@@ -4,18 +4,25 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::{ffi::CStr, sync::atomic::AtomicBool};
 
-use ::tracing::trace;
+use ::tracing::{Level, info, subscriber::set_global_default, trace};
 use rustix::{self, fd::OwnedFd};
+use tracing::{debug, error};
 use waybackend::{objman, types::ObjectId};
 
-use crate::{seat::Seat, surface::Surface, surface::WaylandObject};
+use crate::{
+    log::LinuxSubscriber,
+    seat::Seat,
+    surface::{Surface, WaylandObject},
+};
 
 mod config;
 mod gaps;
+mod log;
 mod seat;
 mod surface;
-mod tracing;
+mod utils;
 mod wayland;
 
 #[global_allocator]
@@ -65,6 +72,9 @@ impl talc::OomHandler for OomHandler {
     }
 }
 
+#[unsafe(no_mangle)]
+pub static mut environ: *const *const core::ffi::c_char = core::ptr::null();
+
 #[cold]
 #[inline(never)]
 #[panic_handler]
@@ -86,8 +96,64 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn origin_main(_: isize, _: *mut *mut u8, envp: *mut *mut u8) -> core::ffi::c_int {
+pub extern "C" fn origin_main(
+    _: isize,
+    _: *mut *mut u8,
+    envp: *mut *mut u8,
+) -> core::ffi::c_int {
+    unsafe { environ = envp.cast() };
+
+    let subscriber = LinuxSubscriber::new(Level::INFO);
+    set_global_default(subscriber).unwrap();
+
+    let (mut backend, mut objman, mut receiver) =
+        utils::connect(WaylandObject::Display);
+    let registry = objman.create(WaylandObject::Registry);
+    let callback = objman.create(WaylandObject::Callback);
+
+    let mut outputs = Vec::new();
+    let mut seats = Vec::new();
+    waybackend::roundtrip(
+        &mut backend,
+        &mut receiver,
+        registry,
+        callback,
+        |backend, global| {
+            use WaylandObject::*;
+            use wayland::*;
+
+            waybackend::bind_globals!(
+                backend,
+                objman,
+                registry,
+                global,
+                |_, _, global: waybackend::Global| match global.interface() {
+                    wayland::wl_output::NAME =>
+                        outputs.push((global.name(), global.version())),
+                    wayland::wl_seat::NAME =>
+                        seats.push((global.name(), global.version())),
+                    _ => (),
+                },
+                (wl_compositor, Compositor),
+                (wl_shm, Shm),
+                (zwlr_layer_shell_v1, LayerShell),
+            );
+        },
+    )
+    .unwrap();
+
+    setup_signals();
+
+    let mut app = App::new(backend, objman);
+    // for (registry_name, version) in outputs {
+    //     app.create_surfaces(registry_name, version);
+    // }
+    //
+    // for (registry_name, version) in seats {
+    //     app.create_seat(registry_name, version);
+    // }
+
+    info!("init");
     0
 }
 
@@ -133,5 +199,109 @@ impl App {
             pipe_read,
             pipe_write,
         }
+    }
+}
+
+static EXIT: AtomicBool = AtomicBool::new(false);
+static PLAYBACK_DIRTY: AtomicBool = AtomicBool::new(true);
+static CAPTURE_DIRTY: AtomicBool = AtomicBool::new(true);
+
+fn set_playback_dirty() {
+    PLAYBACK_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn is_playback_dirty() -> bool {
+    PLAYBACK_DIRTY.swap(false, core::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_capture_dirty() {
+    CAPTURE_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn is_capture_dirty() -> bool {
+    CAPTURE_DIRTY.swap(false, core::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_exit() {
+    EXIT.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn should_exit() -> bool {
+    EXIT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+extern "C" fn signal_handler(s: core::ffi::c_int) {
+    if s == origin::signal::Signal::USR1.as_raw() {
+        set_playback_dirty();
+    } else if s == origin::signal::Signal::USR2.as_raw() {
+        set_capture_dirty();
+    } else {
+        set_exit();
+    }
+}
+
+fn setup_signals() {
+    use origin::signal::{
+        Sigaction, SigactionFlags, Signal, sig_ign, sigaction,
+    };
+    // C data structure, expected to be zeroed out.
+    let mut action = Sigaction {
+        sa_handler_kernel: Some(signal_handler),
+        sa_flags: SigactionFlags::empty(),
+        #[cfg(not(any(
+            target_arch = "csky",
+            target_arch = "loongarch64",
+            target_arch = "mips",
+            target_arch = "mips32r6",
+            target_arch = "mips64",
+            target_arch = "mips64r6",
+            target_arch = "riscv32",
+            target_arch = "riscv64"
+        )))]
+        sa_restorer: None,
+        sa_mask: rustix::runtime::KernelSigSet::empty(),
+    };
+
+    for signal in [
+        Signal::INT,
+        Signal::QUIT,
+        Signal::TERM,
+        Signal::HUP,
+        Signal::USR1,
+        Signal::USR2,
+    ] {
+        if let Err(e) = unsafe { sigaction(signal, Some(action.clone())) } {
+            error!("Failed to install signal handler: {e}");
+        }
+    }
+
+    action.sa_handler_kernel = sig_ign();
+    if let Err(e) = unsafe { sigaction(Signal::CHILD, Some(action)) } {
+        error!("Failed to install signal handler: {e}");
+    }
+
+    debug!("Finished setting up signal handlers");
+}
+
+#[inline(never)]
+fn shell_command(command: &CStr) {
+    match unsafe { rustix::runtime::kernel_fork() } {
+        Ok(rustix::runtime::Fork::Child(_)) => unsafe {
+            let args: [*const u8; 5] = [
+                c"env".as_ptr().cast(),
+                c"bash".as_ptr().cast(),
+                c"-c".as_ptr().cast(),
+                command.as_ptr().cast(),
+                core::ptr::null(),
+            ];
+            let err = rustix::runtime::execve(
+                c"/usr/bin/env",
+                args.as_ptr(),
+                environ.cast(),
+            );
+            panic!("execve failed: {err}");
+        },
+        Err(e) => error!("fork failed: {e}"),
+        _ => {}
     }
 }

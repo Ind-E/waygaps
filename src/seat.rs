@@ -10,7 +10,7 @@ pub struct Pointer {
     pub enter_serial: u32,
     pub scroll: i32,
 
-    pub cur_bar: u32,
+    pub current_surface: u32,
     pub on_clickable: bool,
 }
 
@@ -24,7 +24,7 @@ impl Pointer {
             button: 0,
             enter_serial: 0,
             scroll: 0,
-            cur_bar: u32::MAX,
+            current_surface: u32::MAX,
             on_clickable: false,
         }
     }

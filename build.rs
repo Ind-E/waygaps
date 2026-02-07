@@ -5,11 +5,13 @@ use waybackend_scanner::WaylandProtocol;
 fn main() {
     println!("cargo:rustc-link-arg=-nostartfiles");
 
-    let out_dir = std::env::var_os("OUT_DIR").expect("missing OUT_DIR environment variable");
+    let out_dir = std::env::var_os("OUT_DIR")
+        .expect("missing OUT_DIR environment variable");
 
     let mut filepath = PathBuf::from(out_dir);
     filepath.push("wayland_protocols.rs");
-    let file = std::fs::File::create(filepath).expect("failed to create wayland_protocols.rs");
+    let file = std::fs::File::create(filepath)
+        .expect("failed to create wayland_protocols.rs");
 
     waybackend_scanner::build_script_generate(
         &[

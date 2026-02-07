@@ -1,3 +1,5 @@
+use core::ffi::CStr;
+
 use tracing::warn;
 use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
 
@@ -15,7 +17,7 @@ use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
 /// The `env` parameter must **NOT** end with an `=` byte (before the final null byte, of course).
 #[cold]
 #[inline(never)]
-pub unsafe fn getenv(env: &core::ffi::CStr) -> Option<&core::ffi::CStr> {
+pub unsafe fn getenv(env: &CStr) -> Option<&CStr> {
     unsafe extern "C" {
         static environ: *const *const core::ffi::c_char;
     }
@@ -36,7 +38,7 @@ pub unsafe fn getenv(env: &core::ffi::CStr) -> Option<&core::ffi::CStr> {
             // byte, and the rest of the string is guaranteed to end in a null byte, since it was
             // created by removing the prefix of another CStr, which would also ends in a null byte
             return Some(unsafe {
-                core::ffi::CStr::from_bytes_with_nul_unchecked(&value[1..])
+                CStr::from_bytes_with_nul_unchecked(&value[1..])
             });
         }
         ptr = unsafe { ptr.add(1) };

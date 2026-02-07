@@ -1,29 +1,27 @@
 use waybackend::types::ObjectId;
 
+use crate::wayland::wl_pointer::Axis;
+
 pub struct Pointer {
     pub id: ObjectId,
-    pub cursor_device: ObjectId,
 
-    pub x: u32,
-    pub y: u32,
     pub button: u32,
     pub enter_serial: u32,
-    pub scroll: i32,
+    pub value120: i32,
+    pub axis: Axis,
 
     pub current_surface: u32,
     pub on_clickable: bool,
 }
 
 impl Pointer {
-    pub fn new(id: ObjectId, cursor_device: ObjectId) -> Self {
+    pub fn new(id: ObjectId) -> Self {
         Self {
             id,
-            cursor_device,
-            x: 0,
-            y: 0,
             button: 0,
             enter_serial: 0,
-            scroll: 0,
+            value120: 0,
+            axis: Axis::vertical_scroll,
             current_surface: u32::MAX,
             on_clickable: false,
         }

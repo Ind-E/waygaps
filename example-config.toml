@@ -1,0 +1,14 @@
+[hot-corner-1]
+anchor = "left"
+size = 10
+margin = 20
+timeout_ms = 250
+color = 0xFFFF00
+output = "eDP-1"
+
+[hot-corner-1.commands]
+enter = "notify-send enter"
+exit = "notify-send exit"
+btn_left = "notify-send left"
+scroll_up = "notify-send up"
+scroll_down = "notify-send down"

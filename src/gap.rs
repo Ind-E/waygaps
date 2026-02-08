@@ -1,8 +1,6 @@
-use alloc::boxed::Box;
 use core::ffi::CStr;
 
 use rustix::{self, fd::OwnedFd};
-use smallvec::SmallVec;
 use waybackend::{
     Waybackend, objman::ObjectManager, shm::MmappedSlice, types::ObjectId,
 };
@@ -34,8 +32,8 @@ pub struct WayGap {
     pub configured: bool,
     pub redraw: bool,
 
-    pub commands: SmallVec<[(InputEvent, Box<CStr>); 8]>,
-    pub debug_color: Color,
+    pub commands: &'static [(InputEvent, &'static CStr)],
+    pub preview_color: Color,
     pub activation_force: u32,
 }
 
@@ -47,7 +45,7 @@ impl WayGap {
         wl_compositor: ObjectId,
         layer_shell: ObjectId,
         wl_output: ObjectId,
-        config: GapConfig,
+        config: &GapConfig,
     ) -> rustix::io::Result<Self> {
         let wl_surface = objman.create(WaylandObject::Surface);
         wayland::wl_compositor::req::create_surface(
@@ -153,8 +151,10 @@ impl WayGap {
             configured: false,
             redraw: false,
 
-            commands: config.commands,
-            debug_color: config.debug_color,
+            commands: unsafe {
+                core::mem::transmute(config.commands.as_slice())
+            },
+            preview_color: config.preview_color,
             activation_force: config.activation_force,
         })
     }
@@ -240,7 +240,7 @@ impl WayGap {
             self.width,
             self.height,
             self.width, // stride
-            self.debug_color,
+            self.preview_color,
         );
     }
 }

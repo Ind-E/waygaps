@@ -1,10 +1,10 @@
-use alloc::ffi::CString;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::ffi::{CStr, c_void};
 
 use atoi::{FromRadix10Checked, FromRadix16Checked};
 use memchr::{Memchr, memchr, memchr2, memrchr, memrchr2};
+use rustix::fd::OwnedFd;
 use rustix::fs::{self, Mode, OFlags};
 use smallvec::SmallVec;
 use wayland::wl_pointer::Axis;
@@ -14,7 +14,7 @@ use crate::wayland::zwlr_layer_shell_v1;
 use crate::{utils::getenv, wayland};
 
 #[repr(u8)]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub enum InputEvent {
     Enter,
     Exit,
@@ -23,18 +23,17 @@ pub enum InputEvent {
     Axis(Axis, i32),
 }
 
-//TODO: remove clone impl
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct GapConfig {
-    pub output: Option<Box<str>>,
+    pub output: Option<&'static [u8]>,
     pub anchor: Anchor,
     pub size: u32,
     pub margin: i32,
     pub activation_force: u32,
     pub ignore_exclusive_zone: bool,
     pub layer: zwlr_layer_shell_v1::Layer,
-    pub debug_color: Color,
-    pub commands: SmallVec<[(InputEvent, Box<CStr>); 8]>,
+    pub preview_color: Color,
+    pub commands: SmallVec<[(InputEvent, &'static CStr); 8]>,
 }
 
 impl Default for GapConfig {
@@ -47,7 +46,7 @@ impl Default for GapConfig {
             activation_force: default_activation_force(),
             ignore_exclusive_zone: default_ignore_exclusive_zone(),
             layer: default_layer(),
-            debug_color: default_debug_color(),
+            preview_color: default_preview_color(),
             commands: Default::default(),
         }
     }
@@ -84,7 +83,7 @@ const fn default_layer() -> zwlr_layer_shell_v1::Layer {
 }
 
 #[inline]
-const fn default_debug_color() -> Color {
+const fn default_preview_color() -> Color {
     Color::new(25, 128, 16, 16)
 }
 
@@ -126,9 +125,8 @@ impl core::fmt::Display for Color {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub enum Anchor {
-    #[default]
     TopLeft,
     TopRight,
     BottomRight,
@@ -174,59 +172,66 @@ impl core::fmt::Display for zwlr_layer_shell_v1::Layer {
     }
 }
 
-pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
-    let home = unsafe {
-        getenv(c"HOME").unwrap_or_else(|| {
+#[inline(always)]
+fn open_file(path: &CStr) -> OwnedFd {
+    match fs::open(path, OFlags::RDONLY, Mode::empty()) {
+        Ok(fd) => {
+            log::info!("opening config file: {path:?}",);
+            fd
+        }
+        Err(e) => {
+            log::error!("error opening config file at {path:?}: {e}");
+            origin::program::exit(1);
+        }
+    }
+}
+
+pub fn read_config(
+    config_path: Option<&'static CStr>,
+) -> BTreeMap<&'static str, GapConfig> {
+    let fd = if let Some(path) = config_path {
+        open_file(path)
+    } else {
+        let home = unsafe {
+            getenv(b"HOME").unwrap_or_else(|| {
         log::warn!("HOME environment variable is not set, searching for config in current directory");
         c"."
     })
+        };
+
+        let mut path_buf = [0u8; 512];
+        let mut len = 0;
+
+        for &b in home.to_bytes() {
+            path_buf[len] = b;
+            len += 1;
+        }
+
+        for &b in b"/.config/waygaps/config.kdl" {
+            path_buf[len] = b;
+            len += 1;
+        }
+
+        // null terminate
+        path_buf[len] = 0;
+        let path_buf = &path_buf[0..=len];
+
+        let path = unsafe { CStr::from_bytes_with_nul_unchecked(path_buf) };
+        log::debug!("config path: {path:?}");
+        open_file(path)
     };
 
-    let mut path_buf = [0u8; 512];
-    let mut len = 0;
-
-    for &b in home.to_bytes() {
-        path_buf[len] = b;
-        len += 1;
-    }
-
-    for &b in b"/.config/waygaps/config.kdl" {
-        path_buf[len] = b;
-        len += 1;
-    }
-
-    // null terminate
-    path_buf[len] = 0;
-
-    let c_path = match CStr::from_bytes_until_nul(&path_buf) {
-        Ok(path) => {
-            log::debug!("config path: {path:?}");
-            path
-        }
-        Err(e) => {
-            log::error!("error constructing config path: {e}");
-            panic!();
-        }
-    };
-
-    let fd = match fs::open(c_path, OFlags::RDONLY, Mode::empty()) {
-        Ok(fd) => fd,
-        Err(e) => {
-            log::error!("error opening config file: {e}");
-            panic!();
-        }
-    };
     let len = match fs::fstat(&fd) {
         Ok(stat) => stat.st_size as usize,
         Err(e) => {
             log::error!("fstat failed: {e}");
-            panic!();
+            origin::program::exit(1);
         }
     };
 
     let ptr = core::ptr::null_mut::<c_void>();
 
-    let mmap: &[u8] = unsafe {
+    let mmap: &'static [u8] = unsafe {
         use rustix::mm;
         match mm::mmap(
             ptr,
@@ -239,7 +244,7 @@ pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
             Ok(mmap) => core::slice::from_raw_parts(mmap as *const u8, len),
             Err(e) => {
                 log::error!("memmap failed: {e}");
-                panic!();
+                origin::program::exit(1);
             }
         }
     };
@@ -247,7 +252,7 @@ pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
     // validate once, then use unsafe from_utf8_unchecked
     if let Err(e) = core::str::from_utf8(mmap) {
         log::error!("invalid UTF-8: {e}");
-        panic!();
+        origin::program::exit(1);
     }
 
     let mut gaps = Vec::new();
@@ -261,8 +266,6 @@ pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
         Scope::Outer,
     );
 
-    log::debug!("parsed config: {gaps:#?}");
-
     gaps.into_iter().collect()
 }
 
@@ -273,10 +276,10 @@ enum Scope {
 }
 
 fn parse_config(
-    mmap: &[u8],
+    mmap: &'static [u8],
     mut newline_pos_iter: Memchr,
     line_start: usize,
-    gaps: &mut Vec<(Box<str>, GapConfig)>,
+    gaps: &mut Vec<(&'static str, GapConfig)>,
     current_gap: usize,
     scope: Scope,
 ) {
@@ -303,7 +306,7 @@ fn parse_config(
         Scope::Outer => {
             if memchr(b'{', line).is_some() {
                 log::trace!("outer -> inner");
-                let gap_name = Box::from(utf8(before_first_whitespace(line)));
+                let gap_name = utf8(before_first_whitespace(line));
                 let gap_config = GapConfig::default();
                 gaps.push((gap_name, gap_config));
                 return parse_config(
@@ -331,7 +334,7 @@ fn parse_config(
             match before_first_whitespace(line) {
                 b"output" => {
                     gaps[current_gap].1.output =
-                        Some(Box::from(utf8(trim_quotes(line))));
+                        Some(trim_quotes(line));
                 }
                 b"anchor" => {
                     gaps[current_gap].1.anchor = parse_anchor(trim_quotes(line))
@@ -394,8 +397,8 @@ fn parse_config(
                 b"layer" => {
                     gaps[current_gap].1.layer = parse_layer(trim_quotes(line));
                 }
-                b"debug-color" => {
-                    gaps[current_gap].1.debug_color = parse_debug_color(trim_quotes(line));
+                b"preview-color" => {
+                    gaps[current_gap].1.preview_color = parse_preview_color(trim_quotes(line));
                 }
                 b"commands" => {
                     log::trace!("inner -> command");
@@ -434,9 +437,7 @@ fn parse_config(
                 );
             }
             let input = parse_command_input(before_first_whitespace(line));
-            let command = CString::new(utf8(trim_quotes(line)))
-                .unwrap()
-                .into_boxed_c_str();
+            let command = trim_quotes_to_cstr(line);
             gaps[current_gap].1.commands.push((input, command));
             return parse_config(
                 mmap,
@@ -479,14 +480,14 @@ fn parse_command_input(key: &[u8]) -> InputEvent {
                     utf8(key),
                     utf8(num)
                 );
-                panic!();
+                origin::program::exit(1);
             });
             InputEvent::Button(id)
         }
 
         _ => {
             log::error!("unknown input event: {}", utf8(key));
-            panic!();
+            origin::program::exit(1);
         }
     }
 }
@@ -506,31 +507,49 @@ fn trim_whitespace(s: &[u8]) -> &[u8] {
         .iter()
         .rposition(|b| !b.is_ascii_whitespace())
         .map_or(start, |x| x + 1);
-    log::trace!("trim: `{}` -> `{}`", utf8(s), utf8(&s[start..end]));
-    &s[start..end]
+    let retval = &s[start..end];
+    log::trace!("trim: `{}` -> `{}`", utf8(s), utf8(retval));
+    retval
 }
 
 #[inline]
 fn trim_quotes(s: &[u8]) -> &[u8] {
     let start = memchr(b'"', s).unwrap_or(0);
     let end = memrchr(b'"', s).unwrap_or(s.len());
-    log::trace!(
-        "trim_quotes: `{}` -> `{}`",
-        utf8(s),
-        utf8(&s[start + 1..end])
-    );
-    &s[start + 1..end]
+    let retval = &s[start + 1..end];
+    log::trace!("trim_quotes: `{}` -> `{}`", utf8(s), utf8(retval));
+    retval
+}
+
+#[inline]
+fn trim_quotes_to_cstr(s: &[u8]) -> &CStr {
+    let start = memchr(b'"', s).unwrap_or(0);
+    let end = memrchr(b'"', s).unwrap_or(s.len() - 1);
+
+    let inner = &s[start + 1..end];
+
+    let mut buf = SmallVec::<[u8; 256]>::with_capacity(inner.len() + 1);
+    buf.extend_from_slice(inner);
+    buf.push(0);
+
+    // TODO: I hate this
+    let leaked: &'static [u8] = alloc::boxed::Box::leak(buf.into_boxed_slice());
+
+    let retval = unsafe { CStr::from_bytes_with_nul_unchecked(leaked) };
+    log::trace!("trim_quotes_to_cstr: `{}` -> `{:?}`", utf8(s), retval);
+    retval
 }
 
 #[inline]
 fn before_first_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memchr2(b' ', b'\t', s) {
+        let retval = &s[0..n];
         log::trace!(
             "before_first_whitespace: `{}` -> `{}`",
             utf8(s),
-            utf8(&s[0..n])
+            utf8(retval)
         );
-        &s[0..n]
+        retval
     } else {
         log::trace!("failed to find in before_first_whitespace");
         s
@@ -540,12 +559,13 @@ fn before_first_whitespace(s: &[u8]) -> &[u8] {
 #[inline]
 fn after_last_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memrchr2(b' ', b'\t', s) {
+        let retval = &s[n + 1..];
         log::trace!(
             "after_last_whitespace: `{}` -> `{}`",
             utf8(s),
-            utf8(&s[n + 1..])
+            utf8(retval)
         );
-        &s[n + 1..]
+        retval
     } else {
         log::trace!("failed to find in after_last_whitespace");
         s
@@ -594,7 +614,7 @@ fn parse_layer(s: &[u8]) -> zwlr_layer_shell_v1::Layer {
 }
 
 #[inline]
-fn parse_debug_color(s: &[u8]) -> Color {
+fn parse_preview_color(s: &[u8]) -> Color {
     let (n, digits) = u32::from_radix_16_checked(s);
 
     let (r, g, b, a) = match (n, digits) {
@@ -618,9 +638,9 @@ fn parse_debug_color(s: &[u8]) -> Color {
             log::warn!(
                 "{} is not a valid debug color, defaulting to {}",
                 utf8(s),
-                default_debug_color()
+                default_preview_color()
             );
-            let c = default_debug_color();
+            let c = default_preview_color();
             return c;
         }
     };

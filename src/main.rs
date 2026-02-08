@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
+use alloc::collections::btree_map::BTreeMap;
 use core::{
     ffi::{CStr, c_char, c_int},
     mem::MaybeUninit,
@@ -17,13 +17,17 @@ use rustix::{
     process::{self},
 };
 use smallvec::SmallVec;
-use waybackend::{objman, types::ObjectId};
+use waybackend::{
+    Waybackend,
+    objman::{self, ObjectManager},
+    types::ObjectId,
+};
 
 use crate::{
     config::{GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
-    utils::is_output_match,
+    utils::{getenv, is_output_match, parse_args},
 };
 
 mod config;
@@ -107,21 +111,24 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn origin_main(
-    _argc: c_int,
-    _argv: *const *const c_char,
+    argc: c_int,
+    argv: *const *const c_char,
     envp: *const *const c_char,
-) -> core::ffi::c_int {
+) -> c_int {
     unsafe { environ = envp.cast() };
-    // lower our process niceness priority. It's ok to delay updating the gaps
-    // if the system is under heavy load
-    let _ = rustix::process::nice(1);
 
     #[cfg(not(debug_assertions))]
     log::init(log::Filter::Info);
     #[cfg(debug_assertions)]
     log::init(log::Filter::Trace);
 
-    let configs = read_config();
+    let args = parse_args(argc, argv);
+
+    // lower our process niceness priority. It's ok to delay updating the gaps
+    // if the system is under heavy load
+    let _ = rustix::process::nice(1);
+
+    let configs = read_config(args.config_path);
     log::debug!("config: {configs:#?}");
 
     let (mut backend, mut objman, mut receiver) =
@@ -165,7 +172,7 @@ pub extern "C" fn origin_main(
     let pid = process::getpid();
     log::info!("pid: {}", pid);
 
-    let mut app = App::new(backend, objman, configs);
+    let mut app = App::new(backend, objman, configs, args.preview);
 
     for (registry_name, version) in outputs {
         let wl_output = app.objman.create(WaylandObject::Output);
@@ -173,8 +180,8 @@ pub extern "C" fn origin_main(
         app.pending_outputs.push(PendingOutput {
             registry_name,
             id: wl_output,
-            name: Box::from(<&str>::default()),
-            description: Box::from(<&str>::default()),
+            name: <&str>::default(),
+            description: <&str>::default(),
         });
 
         wayland::wl_registry::req::bind(
@@ -268,7 +275,9 @@ pub extern "C" fn origin_main(
             }
         }
 
-        app.redraw();
+        if !app.preview {
+            app.redraw();
+        }
     }
 
     0
@@ -277,8 +286,8 @@ pub extern "C" fn origin_main(
 struct PendingOutput {
     registry_name: u32,
     id: ObjectId,
-    name: Box<str>,
-    description: Box<str>,
+    name: &'static str,
+    description: &'static str,
 }
 
 struct App {
@@ -291,19 +300,19 @@ struct App {
     waygaps: SmallVec<[WayGap; 8]>,
     seats: SmallVec<[Seat; 4]>,
     pending_outputs: SmallVec<[PendingOutput; 4]>,
-    configs: BTreeMap<Box<str>, GapConfig>,
+    configs: BTreeMap<&'static str, GapConfig>,
 
     pipe_read: OwnedFd,
     pipe_write: OwnedFd,
-    /// whether to draw surfaces with colors
-    debug: bool,
+    preview: bool,
 }
 
 impl App {
     fn new(
         backend: waybackend::Waybackend,
         objman: objman::ObjectManager<WaylandObject>,
-        configs: BTreeMap<Box<str>, GapConfig>,
+        configs: BTreeMap<&'static str, GapConfig>,
+        preview: bool,
     ) -> Self {
         let registry = objman.get_first(WaylandObject::Registry).unwrap();
         let compositor = objman.get_first(WaylandObject::Compositor).unwrap();
@@ -329,27 +338,7 @@ impl App {
             configs,
             pipe_read,
             pipe_write,
-            debug: true,
-        }
-    }
-
-    fn create_waygap(
-        &mut self,
-        registry_name: u32,
-        wl_output: ObjectId,
-        config: &GapConfig,
-    ) {
-        match WayGap::new(
-            &mut self.backend,
-            &mut self.objman,
-            registry_name,
-            self.compositor,
-            self.layer_shell,
-            wl_output,
-            config.clone(),
-        ) {
-            Ok(waygap) => self.waygaps.push(waygap),
-            Err(e) => log::error!("failed to create waygap: {e}"),
+            preview,
         }
     }
 
@@ -381,6 +370,31 @@ impl App {
                 log::error!("failed to draw frame: {e}");
             }
         }
+    }
+}
+
+// not a method to avoid borrowing shenanigans
+fn create_waygap(
+    backend: &mut Waybackend,
+    objman: &mut ObjectManager<WaylandObject>,
+    compositor: ObjectId,
+    layer_shell: ObjectId,
+    registry_name: u32,
+    wl_output: ObjectId,
+    config: &GapConfig,
+    waygaps: &mut SmallVec<[WayGap; 8]>,
+) {
+    match WayGap::new(
+        backend,
+        objman,
+        registry_name,
+        compositor,
+        layer_shell,
+        wl_output,
+        config,
+    ) {
+        Ok(waygap) => waygaps.push(waygap),
+        Err(e) => log::error!("failed to create waygap: {e}"),
     }
 }
 
@@ -772,24 +786,23 @@ impl wayland::wl_output::EvHandler for App {
                 return;
             };
 
-            (
-                pending.name.clone(),
-                pending.description.clone(),
-                pending.registry_name,
-            )
+            (pending.name, pending.description, pending.registry_name)
         };
-        let matches: BTreeMap<Box<str>, GapConfig> = self
-            .configs
-            .clone()
-            .into_iter()
-            .filter(|(_, cfg)| {
-                is_output_match(cfg.output.as_deref(), &name, &description)
-            })
-            .collect();
 
-        for (cfg_name, cfg) in matches {
-            log::info!("opening config `{cfg_name}` on output `{name}`");
-            self.create_waygap(registry_name, sender_id, &cfg);
+        for (cfg_name, cfg) in self.configs.iter() {
+            if is_output_match(cfg.output, &name, &description) {
+                log::info!("opening config `{cfg_name}` on output `{name}`");
+                create_waygap(
+                    &mut self.backend,
+                    &mut self.objman,
+                    self.compositor,
+                    self.layer_shell,
+                    registry_name,
+                    sender_id,
+                    &cfg,
+                    &mut self.waygaps,
+                );
+            }
         }
     }
 
@@ -851,7 +864,8 @@ impl wayland::wl_output::EvHandler for App {
         if let Some(out) =
             self.pending_outputs.iter_mut().find(|o| o.id == sender_id)
         {
-            out.name = Box::from(name);
+            let static_name = unsafe { core::mem::transmute(name) };
+            out.name = static_name;
         }
     }
 
@@ -875,7 +889,9 @@ impl wayland::wl_output::EvHandler for App {
         if let Some(out) =
             self.pending_outputs.iter_mut().find(|o| o.id == sender_id)
         {
-            out.description = Box::from(description);
+            let static_description =
+                unsafe { core::mem::transmute(description) };
+            out.description = static_description;
         }
     }
 }
@@ -914,7 +930,7 @@ impl wayland::wl_pointer::EvHandler for App {
                 if let Some(waygap) =
                     self.waygaps.get(ptr.current_waygap as usize)
                 {
-                    for event in &waygap.commands {
+                    for event in waygap.commands.iter() {
                         if let (InputEvent::Enter, cmd) = event {
                             shell_command(cmd);
                             break;
@@ -939,7 +955,7 @@ impl wayland::wl_pointer::EvHandler for App {
         if let Some(ptr) = get_pointer_seat(&mut self.seats, sender_id) {
             if let Some(waygap) = self.waygaps.get(ptr.current_waygap as usize)
             {
-                for event in &waygap.commands {
+                for event in waygap.commands.iter() {
                     if let (InputEvent::Exit, cmd) = event {
                         shell_command(cmd);
                         break;
@@ -1118,7 +1134,7 @@ impl wayland::wl_pointer::EvHandler for App {
             None => return,
         };
 
-        for event in &waygap.commands {
+        for event in waygap.commands.iter() {
             if let (InputEvent::Button(btn), cmd) = event
                 && *btn == ptr.button
             {
@@ -1129,7 +1145,7 @@ impl wayland::wl_pointer::EvHandler for App {
 
         if ptr.value120 <= -120 {
             ptr.value120 += 120;
-            for event in &waygap.commands {
+            for event in waygap.commands.iter() {
                 if let (InputEvent::Axis(axis, dir), cmd) = event
                     && *axis == ptr.axis
                     && *dir < 0
@@ -1139,7 +1155,7 @@ impl wayland::wl_pointer::EvHandler for App {
             }
         } else if ptr.value120 >= 120 {
             ptr.value120 -= 120;
-            for event in &waygap.commands {
+            for event in waygap.commands.iter() {
                 if let (InputEvent::Axis(axis, dir), cmd) = event
                     && *axis == ptr.axis
                     && *dir > 0
@@ -1150,7 +1166,7 @@ impl wayland::wl_pointer::EvHandler for App {
         }
 
         if ptr.should_trigger_edge {
-            for event in &waygap.commands {
+            for event in waygap.commands.iter() {
                 if let (InputEvent::Edge, cmd) = event {
                     shell_command(cmd);
                     break;
@@ -1435,7 +1451,7 @@ impl wayland::zwlr_layer_surface_v1::EvHandler for App {
 
             waygap.configured = true;
 
-            if self.debug {
+            if self.preview {
                 waygap.draw_debug();
             }
 

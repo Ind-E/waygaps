@@ -1,4 +1,6 @@
 use core::ffi::CStr;
+use core::ffi::c_char;
+use core::ffi::c_int;
 
 use smallvec::SmallVec;
 use smallvec::ToSmallVec as _;
@@ -23,7 +25,7 @@ use crate::log;
 /// byte, of course).
 #[cold]
 #[inline(never)]
-pub unsafe fn getenv(env: &CStr) -> Option<&CStr> {
+pub unsafe fn getenv(env: &[u8]) -> Option<&CStr> {
     unsafe extern "C" {
         static environ: *const *const core::ffi::c_char;
     }
@@ -37,9 +39,7 @@ pub unsafe fn getenv(env: &CStr) -> Option<&CStr> {
         // SAFETY: environ is composed of null terminated strings, so this
         // should be safe
         let cstr = unsafe { core::ffi::CStr::from_ptr(cptr) };
-        if let Some(value) =
-            cstr.to_bytes_with_nul().strip_prefix(env.to_bytes())
-        {
+        if let Some(value) = cstr.to_bytes_with_nul().strip_prefix(env) {
             // SAFETY:
             // Because `env` does not end with a `=` byte, value[1..] will
             // always skip the `=` byte, and the rest of the string
@@ -61,7 +61,7 @@ where
     use rustix::fd::{FromRawFd, OwnedFd};
     use rustix::net::AddressFamily;
 
-    if let Some(txt) = unsafe { getenv(c"WAYLAND_SOCKET") } {
+    if let Some(txt) = unsafe { getenv(b"WAYLAND_SOCKET") } {
         // We should connect to the provided WAYLAND_SOCKET
         let fd = parse_cstr_to_rawfd(txt)
             .expect("file descriptor in WAYLAND_SOCKET is not a number");
@@ -79,7 +79,7 @@ where
         }
     } else {
         let socket_name =
-            unsafe { getenv(c"WAYLAND_DISPLAY") }.unwrap_or_else(|| {
+            unsafe { getenv(b"WAYLAND_DISPLAY") }.unwrap_or_else(|| {
                 log::warn!(
                     "WAYLAND_DISPLAY is not set! Defaulting to wayland-0"
                 );
@@ -90,7 +90,7 @@ where
             rustix::net::SocketAddrUnix::new(socket_name).unwrap()
         } else {
             let mut socket_fullpath = match unsafe {
-                getenv(c"XDG_RUNTIME_DIR")
+                getenv(b"XDG_RUNTIME_DIR")
             } {
                 Some(socket_path) => socket_path.to_bytes().to_smallvec(),
                 None => {
@@ -154,20 +154,101 @@ fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
 
 #[cold]
 pub fn is_output_match(
-    pattern: Option<&str>,
+    pattern: Option<&[u8]>,
     name: &str,
     description: &str,
 ) -> bool {
     let Some(pattern) = pattern else {
         return true;
     };
+    use memchr::memmem::find;
 
-    let output_matched =
-        name.contains(pattern) || description.contains(pattern);
+    let output_matched = find(pattern, name.as_bytes()).is_some()
+        || find(pattern, description.as_bytes()).is_some();
 
     if !output_matched {
-        log::warn!("no outputs matched pattern `{pattern}`");
+        log::warn!(
+            "no outputs matched pattern `{}`",
+            core::str::from_utf8(pattern).unwrap_or_else(|_| "invalid UTF-8")
+        );
     }
 
     output_matched
+}
+
+pub struct Args {
+    pub preview: bool,
+    pub config_path: Option<&'static CStr>,
+}
+
+pub fn parse_args(argc: c_int, argv: *const *const c_char) -> Args {
+    let mut args = Args {
+        preview: false,
+        config_path: None,
+    };
+
+    let argv_slice =
+        unsafe { core::slice::from_raw_parts(argv, argc as usize) };
+
+    let mut i = 1;
+    while i < argv_slice.len() {
+        let ptr = argv_slice[i];
+        if ptr.is_null() {
+            i += 1;
+            continue;
+        }
+
+        // 2. Wrap the pointer in a &CStr (Zero Allocation)
+        let arg = unsafe { CStr::from_ptr(ptr) };
+
+        match arg.to_bytes() {
+            b"-p" | b"--preview" => {
+                args.preview = true;
+            }
+            b"-v" | b"--version" => {
+                log::info!("waygaps v{}", env!("CARGO_PKG_VERSION"));
+                origin::program::exit(0);
+            }
+            b"-h" | b"--help" => help(0),
+            b"-c" | b"--config" => {
+                if i + 1 < argv_slice.len() {
+                    let path_ptr = argv_slice[i + 1];
+                    if !path_ptr.is_null() {
+                        args.config_path =
+                            Some(unsafe { CStr::from_ptr(path_ptr) });
+                        i += 1;
+                    }
+                } else {
+                    log::error!(
+                        "a value is required for '{} <CONFIG>' but none was supplied",
+                        arg.to_str().unwrap()
+                    );
+                    origin::program::exit(-1);
+                }
+            }
+            _ => {
+                log::error!(
+                    "unexpected argument '{}' found",
+                    arg.to_str().unwrap()
+                );
+                help(1)
+            }
+        }
+        i += 1;
+    }
+
+    args
+}
+
+#[inline(always)]
+fn help(status: c_int) {
+    log::info!("Usage: waygaps [OPTIONS]");
+    log::info!("Options:");
+    log::info!(
+        "-c, --config <CONFIG>  Config file path (default: ~/.config/waygaps/config.kdl)"
+    );
+    log::info!("-p, --preview          Preview the gaps on your screen(s)");
+    log::info!("-h, --help             Print help");
+    log::info!("-v, --version          Print version");
+    origin::program::exit(status);
 }

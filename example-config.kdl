@@ -1,28 +1,8 @@
 hot-corner-1 {
 
-  anchor "right"
+  anchor "top-right"
   size 50
-  debug-color "FFFFFF"
   activation-force 999
-  output "eDP-1"
-
-  commands {
-    enter "notify-send enter"
-    exit "notify-send exit"
-    edge "notify-send edge"
-    scroll-up "notify-send up"
-    scroll-down "notify-send down"
-    scroll-left "notify-send left"
-    scroll-right "notify-send right"
-  }
-
-}
-
-hot-corner-2 {
-
-  anchor "left"
-  size 50
-  activation-force 1000
   output "eDP-1"
 
   commands {

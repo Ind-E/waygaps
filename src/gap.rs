@@ -231,34 +231,15 @@ impl WayGap {
         let mmap =
             MmappedSlice::new(&mut self.shm, self.bufsize as usize, 0).unwrap();
 
-        let stride = self.width;
-
-        let (x1, y1, x2, y2) = (0, 0, self.width, self.height);
-        // match self.anchor {
-        //     // left edge
-        //     wlrAnchor::LEFT | wlrAnchor::BOTTOM | wlrAnchor::TOP => {
-        //         (0, 0, self.width, self.height)
-        //     }
-        //     // right edge
-        //     wlrAnchor::RIGHT | wlrAnchor::BOTTOM | wlrAnchor::TOP => {
-        //
-        //     }
-        //     // top edge
-        //     wlrAnchor::TOP | wlrAnchor::LEFT | wlrAnchor::RIGHT => {}
-        //     // bottom edge
-        //     wlrAnchor::BOTTOM | wlrAnchor::LEFT | wlrAnchor::RIGHT => {}
-        //     // top left corner
-        //     wlrAnchor::TOP | wlrAnchor::LEFT => {}
-        //     // top right corner
-        //     wlrAnchor::TOP | wlrAnchor::RIGHT => {}
-        //     // bottom left corner
-        //     wlrAnchor::BOTTOM | wlrAnchor::LEFT => {}
-        //     // bottom right corner
-        //     wlrAnchor::BOTTOM | wlrAnchor::RIGHT => {}
-        //     _ => unreachable!(),
-        // };
-
-        bg(mmap.0, x1, y1, x2, y2, stride, self.debug_color);
+        bg(
+            mmap.0,
+            0,
+            0,
+            self.width,
+            self.height,
+            self.width, // stride
+            self.debug_color,
+        );
     }
 }
 
@@ -280,10 +261,10 @@ pub fn bg(
     );
     let color = color.as_u32();
 
-    //SAFETY: we just verified these bounds above
+    // SAFETY: we just verified these bounds above
     for y in y1..y2 {
-        // by declaring this row here like this, we make it easier for the compiler to
-        // vectorize this code
+        // by declaring this row here like this, we make it easier for the
+        // compiler to vectorize this code
         let row = unsafe { canvas.as_mut_ptr().add((y * stride) as usize) };
         for x in x1..x2 {
             unsafe { row.add(x as usize).write(color) }

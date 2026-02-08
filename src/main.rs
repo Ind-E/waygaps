@@ -20,7 +20,7 @@ use smallvec::SmallVec;
 use waybackend::{objman, types::ObjectId};
 
 use crate::{
-    config::{GapConfig, InputEvent, load_config},
+    config::{GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
     utils::is_output_match,
@@ -50,9 +50,10 @@ impl talc::OomHandler for OomHandler {
         talc: &mut talc::Talc<Self>,
         layout: core::alloc::Layout,
     ) -> Result<(), ()> {
-        // We need at least ~1KB for talc's metadata. We allocate twice that to be sure.
-        // Besides that, we round our allocation up to the next group of 1MB, so that we waste
-        // less space to the metadata, and have to do less allocations overall
+        // We need at least ~1KB for talc's metadata. We allocate twice that to
+        // be sure. Besides that, we round our allocation up to the next
+        // group of 1MB, so that we waste less space to the metadata,
+        // and have to do less allocations overall
         let len = ((1 << 11) + layout.size()).next_multiple_of(1 << 20);
 
         // Note: as an optimization, we could use mremap on linux to extend
@@ -111,8 +112,8 @@ pub extern "C" fn origin_main(
     envp: *mut *mut u8,
 ) -> core::ffi::c_int {
     unsafe { environ = envp.cast() };
-    // lower our process niceness priority. It's ok to delay updating the gaps if the system is
-    // under heavy load
+    // lower our process niceness priority. It's ok to delay updating the gaps
+    // if the system is under heavy load
     let _ = rustix::process::nice(1);
 
     #[cfg(not(debug_assertions))]
@@ -120,7 +121,7 @@ pub extern "C" fn origin_main(
     #[cfg(debug_assertions)]
     log::init(log::Filter::Trace);
 
-    let configs: BTreeMap<Box<str>, GapConfig> = load_config().unwrap();
+    let configs = read_config();
     log::debug!("config: {configs:#?}");
 
     let (mut backend, mut objman, mut receiver) =
@@ -162,9 +163,9 @@ pub extern "C" fn origin_main(
     setup_signals();
 
     let pid = process::getpid();
-    log::info!("pid: {}", pid);
+    log::debug!("pid: {}", pid);
 
-    let mut app = App::new(backend, objman, configs.clone());
+    let mut app = App::new(backend, objman, configs);
 
     for (registry_name, version) in outputs {
         let wl_output = app.objman.create(WaylandObject::Output);
@@ -186,12 +187,6 @@ pub extern "C" fn origin_main(
         )
         .unwrap();
     }
-
-    // for (registry_name, version) in outputs {
-    //     for gap_config in configs.values() {
-    // app.create_waygap(registry_name, version, gap_config.clone());
-    //     }
-    // }
 
     for (registry_name, version) in seats {
         app.create_seat(registry_name, version);
@@ -218,7 +213,6 @@ pub extern "C" fn origin_main(
 
         let ready_events = match epoll::wait(
             &epoll_fd,
-            // rustix::buffer::spare_capacity(&mut event_list),
             &mut event_buffer,
             None,
         ) {
@@ -346,7 +340,7 @@ impl App {
         &mut self,
         registry_name: u32,
         wl_output: ObjectId,
-        config: GapConfig,
+        config: &GapConfig,
     ) {
         match WayGap::new(
             &mut self.backend,
@@ -355,7 +349,7 @@ impl App {
             self.compositor,
             self.layer_shell,
             wl_output,
-            config,
+            config.clone(),
         ) {
             Ok(waygap) => self.waygaps.push(waygap),
             Err(e) => log::error!("failed to create waygap: {e}"),
@@ -570,9 +564,10 @@ impl wayland::wl_seat::EvHandler for App {
     /// The same seat names are used for all clients. Thus, the name can be
     /// shared across processes to refer to a specific wl_seat global.
     ///
-    /// The name event is sent after binding to the seat global, and should be sent
-    /// before announcing capabilities. This event only sent once per seat object,
-    /// and the name does not change over the lifetime of the wl_seat global.
+    /// The name event is sent after binding to the seat global, and should be
+    /// sent before announcing capabilities. This event only sent once per
+    /// seat object, and the name does not change over the lifetime of the
+    /// wl_seat global.
     ///
     /// Compositors may re-use the same seat name if the wl_seat global is
     /// destroyed and re-created later.
@@ -797,7 +792,7 @@ impl wayland::wl_output::EvHandler for App {
 
         for (cfg_name, cfg) in matches {
             log::info!("opening config `{cfg_name}` on output `{name}`");
-            self.create_waygap(registry_name, sender_id, cfg);
+            self.create_waygap(registry_name, sender_id, &cfg);
         }
     }
 
@@ -1225,7 +1220,7 @@ impl wayland::wl_pointer::EvHandler for App {
         _time: u32,
         _axis: wayland::wl_pointer::Axis,
     ) {
-        //NoOp
+        // NoOp
     }
 
     /// axis click event
@@ -1260,7 +1255,6 @@ impl wayland::wl_pointer::EvHandler for App {
     ///
     /// The order of wl_pointer.axis_discrete and wl_pointer.axis_source is
     /// not guaranteed.
-    ///
     fn axis_discrete(
         &mut self,
         sender_id: ObjectId,

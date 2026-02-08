@@ -23,7 +23,8 @@ pub enum Filter {
 }
 
 pub fn init(filter: Filter) {
-    // this is unsafe because in no-std environments the stderr file descriptor may be invalid
+    // this is unsafe because in no-std environments the stderr file descriptor
+    // may be invalid
     #[allow(unused_unsafe)]
     let stderr = unsafe { rustix::stdio::stderr() };
     IS_TTY.store(rustix::termios::isatty(stderr), Ordering::SeqCst);
@@ -63,7 +64,8 @@ pub fn log(filter: Filter, msg: core::fmt::Arguments) {
         None => ::alloc::borrow::Cow::Owned(msg.to_string()),
     };
 
-    // this is unsafe because in no-std environments the stderr file descriptor may be invalid
+    // this is unsafe because in no-std environments the stderr file descriptor
+    // may be invalid
     #[allow(unused_unsafe)]
     let stderr = unsafe { rustix::stdio::stderr() };
     let bufs = [

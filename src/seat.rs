@@ -15,7 +15,8 @@ pub struct Pointer {
 
     pub button: u32,
     pub enter_serial: u32,
-    /// scroll amount. 120 is a normal scroll amount for one mouse ratchet
+    /// represents high-resolution wheel scroll information, with each multiple
+    /// of 120 representing one logical scroll step (a wheel detent).
     pub value120: i32,
     pub axis: Axis,
 

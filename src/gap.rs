@@ -1,14 +1,16 @@
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
+use alloc::boxed::Box;
 use core::ffi::CStr;
 
 use rustix::{self, fd::OwnedFd};
+use smallvec::SmallVec;
 use waybackend::{
     Waybackend, objman::ObjectManager, shm::MmappedSlice, types::ObjectId,
 };
 use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
 
 use crate::{
-    config::{Anchor, Color, FxHashMap, GapConfig, InputEvent},
+    BUFFER_SCALE,
+    config::{Anchor, Color, GapConfig, InputEvent},
     wayland,
 };
 
@@ -17,7 +19,6 @@ const NAMESPACE: &str = "waygaps";
 pub struct WayGap {
     pub registry_name: u32,
 
-    pub wl_output: ObjectId,
     pub wl_surface: ObjectId,
     pub layer_surface: ObjectId,
 
@@ -25,24 +26,16 @@ pub struct WayGap {
 
     pub width: u32,
     pub height: u32,
-    pub anchor: wlrAnchor,
 
     bufsize: u32,
-    pub ftags: u32,
-    pub otags: u32,
-    pub urg: u32,
 
     shm: OwnedFd,
 
     pub configured: bool,
-    pub selected: bool,
     pub redraw: bool,
 
-    last_window_width: u32,
-
-    pub commands: FxHashMap<InputEvent, Box<CStr>>,
-    pub color: Color,
-    pub margin: i32,
+    pub commands: SmallVec<[(InputEvent, Box<CStr>); 8]>,
+    pub debug_color: Color,
     pub activation_force: u32,
 }
 
@@ -74,28 +67,59 @@ impl WayGap {
             NAMESPACE,
         )?;
 
+        let size = config.size * BUFFER_SCALE;
+
         let (anchor, width, height) = match config.anchor {
-            Anchor::TopLeft => {
-                (wlrAnchor::LEFT | wlrAnchor::TOP, config.size, config.size)
+            Anchor::TopLeft => (wlrAnchor::LEFT | wlrAnchor::TOP, size, size),
+            Anchor::TopRight => (wlrAnchor::RIGHT | wlrAnchor::TOP, size, size),
+            Anchor::BottomRight => {
+                (wlrAnchor::RIGHT | wlrAnchor::BOTTOM, size, size)
             }
-            Anchor::TopRight => {
-                (wlrAnchor::RIGHT | wlrAnchor::TOP, config.size, config.size)
+            Anchor::BottomLeft => {
+                (wlrAnchor::LEFT | wlrAnchor::BOTTOM, size, size)
             }
-            Anchor::BottomRight => (
-                wlrAnchor::RIGHT | wlrAnchor::BOTTOM,
-                config.size,
-                config.size,
+            Anchor::Left => (
+                wlrAnchor::LEFT | wlrAnchor::TOP | wlrAnchor::BOTTOM,
+                size,
+                0,
             ),
-            Anchor::BottomLeft => (
-                wlrAnchor::LEFT | wlrAnchor::BOTTOM,
-                config.size,
-                config.size,
+            Anchor::Right => (
+                wlrAnchor::RIGHT | wlrAnchor::TOP | wlrAnchor::BOTTOM,
+                size,
+                0,
             ),
-            Anchor::Left => (wlrAnchor::LEFT, config.size, 0),
-            Anchor::Right => (wlrAnchor::RIGHT, config.size, 0),
-            Anchor::Top => (wlrAnchor::TOP, 0, config.size),
-            Anchor::Bottom => (wlrAnchor::BOTTOM, 0, config.size),
+            Anchor::Top => {
+                (wlrAnchor::TOP | wlrAnchor::LEFT | wlrAnchor::RIGHT, 0, size)
+            }
+            Anchor::Bottom => (
+                wlrAnchor::BOTTOM | wlrAnchor::LEFT | wlrAnchor::RIGHT,
+                0,
+                size,
+            ),
         };
+
+        if config.ignore_exclusive_zone {
+            wayland::zwlr_layer_surface_v1::req::set_exclusive_zone(
+                backend,
+                layer_surface,
+                -1,
+            )?;
+        }
+
+        wayland::zwlr_layer_surface_v1::req::set_margin(
+            backend,
+            layer_surface,
+            config.margin,
+            config.margin,
+            config.margin,
+            config.margin,
+        )?;
+
+        wayland::zwlr_layer_surface_v1::req::set_layer(
+            backend,
+            layer_surface,
+            config.layer,
+        )?;
 
         wayland::zwlr_layer_surface_v1::req::set_anchor(
             backend,
@@ -109,10 +133,11 @@ impl WayGap {
             height,
         )?;
 
+        wayland::wl_surface::req::commit(backend, wl_surface)?;
+
         Ok(Self {
             registry_name,
 
-            wl_output,
             wl_surface,
             layer_surface,
 
@@ -120,24 +145,17 @@ impl WayGap {
 
             width,
             height,
-            anchor,
 
             bufsize: 0,
-            ftags: 0,
-            otags: 0,
-            urg: 0,
 
             shm: waybackend::shm::create()?,
 
             configured: false,
-            selected: false,
             redraw: false,
 
-            last_window_width: 0,
             commands: config.commands,
-            color: config.color,
+            debug_color: config.debug_color,
             activation_force: config.activation_force,
-            margin: config.margin,
         })
     }
 
@@ -240,7 +258,7 @@ impl WayGap {
         //     _ => unreachable!(),
         // };
 
-        bg(mmap.0, x1, y1, x2, y2, stride, self.color);
+        bg(mmap.0, x1, y1, x2, y2, stride, self.debug_color);
     }
 }
 

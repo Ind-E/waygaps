@@ -1,49 +1,54 @@
 use alloc::vec;
 use alloc::{
     boxed::Box, collections::btree_map::BTreeMap, ffi::CString, format,
-    string::String, vec::Vec,
+    string::String,
 };
 use core::ffi::CStr;
 
-use rustc_hash::FxBuildHasher;
 use rustix::fs::{self, Mode, OFlags};
 use rustix::path::Arg as _;
 use serde::Deserialize;
-use tracing::warn;
+use smallvec::SmallVec;
 use wayland::wl_pointer::Axis;
 
+use crate::log;
+use crate::wayland::zwlr_layer_shell_v1;
 use crate::{utils::getenv, wayland};
-
-pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InputEvent {
     Enter,
     Exit,
+    Edge,
     Button(u32),
     Axis(Axis, i32),
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub struct GapConfigRaw {
-    pub output: Option<String>,
-    pub commands: BTreeMap<String, String>,
-    pub anchor: Option<Anchor>,
-    pub size: Option<u32>,
-    pub margin: Option<i32>,
-    pub activation_force: Option<u32>,
-    pub color: Option<u32>,
+#[serde(rename_all = "kebab-case")]
+struct GapConfigRaw {
+    output: Option<Box<str>>,
+    commands: BTreeMap<Box<str>, Box<str>>,
+    anchor: Option<Anchor>,
+    size: Option<u32>,
+    margin: Option<i32>,
+    activation_force: Option<u32>,
+    ignore_exclusive_zone: Option<bool>,
+    layer: Option<Layer>,
+    debug_color: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct GapConfig {
-    pub output: Option<String>,
-    pub commands: FxHashMap<InputEvent, Box<CStr>>,
+    pub output: Option<Box<str>>,
+    pub commands: SmallVec<[(InputEvent, Box<CStr>); 8]>,
     pub anchor: Anchor,
     pub size: u32,
     pub margin: i32,
     pub activation_force: u32,
-    pub color: Color,
+    pub ignore_exclusive_zone: bool,
+    pub layer: zwlr_layer_shell_v1::Layer,
+    pub debug_color: Color,
 }
 
 #[repr(C, align(4))]
@@ -93,6 +98,7 @@ impl Color {
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum Anchor {
     #[default]
     TopLeft,
@@ -105,6 +111,28 @@ pub enum Anchor {
     Bottom,
 }
 
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Layer {
+    Background,
+    Bottom,
+    Top,
+    #[default]
+    Overlay,
+}
+
+impl From<Option<Layer>> for zwlr_layer_shell_v1::Layer {
+    fn from(value: Option<Layer>) -> Self {
+        use zwlr_layer_shell_v1::Layer as wlrLayer;
+        match value.unwrap_or_default() {
+            Layer::Background => wlrLayer::background,
+            Layer::Bottom => wlrLayer::bottom,
+            Layer::Top => wlrLayer::top,
+            Layer::Overlay => wlrLayer::overlay,
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for GapConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -112,18 +140,18 @@ impl<'de> Deserialize<'de> for GapConfig {
     {
         let raw = GapConfigRaw::deserialize(deserializer)?;
 
-        let mut commands = FxHashMap::default();
+        let mut commands = SmallVec::new();
 
         for (key, cmd) in raw.commands {
-            let event = parse_input_key(&key)
-                .map_err(|e| serde::de::Error::custom(e))?;
-            let cstr = CString::new(cmd)
+            let event =
+                parse_input_key(&key).map_err(serde::de::Error::custom)?;
+            let cstr: Box<CStr> = CString::new(cmd.as_ref())
                 .map_err(|_| {
                     serde::de::Error::custom("command contains NUL byte")
                 })?
                 .into_boxed_c_str();
 
-            commands.insert(event, cstr);
+            commands.push((event, cstr));
         }
 
         Ok(GapConfig {
@@ -132,8 +160,10 @@ impl<'de> Deserialize<'de> for GapConfig {
             anchor: raw.anchor.unwrap_or(Anchor::Left),
             size: raw.size.unwrap_or(25),
             margin: raw.margin.unwrap_or(0),
-            activation_force: raw.activation_force.unwrap_or(0),
-            color: Color::new_from_u32(raw.color.unwrap_or(0)),
+            activation_force: raw.activation_force.unwrap_or(1000),
+            ignore_exclusive_zone: raw.ignore_exclusive_zone.unwrap_or(true),
+            layer: raw.layer.into(),
+            debug_color: Color::new_from_u32(raw.debug_color.unwrap_or(0)),
         })
     }
 }
@@ -145,19 +175,18 @@ impl<'de> Deserialize<'de> for GapConfig {
 /// [     15:     wl_pointer] frame
 /// [     15:     wl_pointer] button: serial: 446214; time: 59602336; button: 272 (left), state: 0 (released)
 /// [     15:     wl_pointer] frame
-fn parse_input_key(key: &str) -> Result<InputEvent, String> {
+fn parse_input_key(key: &str) -> Result<InputEvent, Box<str>> {
     match key {
         "enter" => Ok(InputEvent::Enter),
         "exit" | "leave" => Ok(InputEvent::Exit),
-        "scroll_up" => Ok(InputEvent::Axis(Axis::vertical_scroll, 1)),
-        "scroll_down" => Ok(InputEvent::Axis(Axis::vertical_scroll, -1)),
+        "edge" => Ok(InputEvent::Edge),
+        "scroll_up" => Ok(InputEvent::Axis(Axis::vertical_scroll, -1)),
+        "scroll_down" => Ok(InputEvent::Axis(Axis::vertical_scroll, 1)),
         "scroll_left" => Ok(InputEvent::Axis(Axis::horizontal_scroll, -1)),
         "scroll_right" => Ok(InputEvent::Axis(Axis::horizontal_scroll, 1)),
-        "btn_left" => Ok(InputEvent::Button(input_event_codes::BTN_LEFT!())),
-        "btn_right" => Ok(InputEvent::Button(input_event_codes::BTN_RIGHT!())),
-        "btn_middle" => {
-            Ok(InputEvent::Button(input_event_codes::BTN_MIDDLE!()))
-        }
+        "btn_left" => Ok(InputEvent::Button(272)),
+        "btn_right" => Ok(InputEvent::Button(273)),
+        "btn_middle" => Ok(InputEvent::Button(274)),
 
         _ if key.starts_with("btn_") => {
             let num = &key[4..];
@@ -167,14 +196,14 @@ fn parse_input_key(key: &str) -> Result<InputEvent, String> {
             Ok(InputEvent::Button(id))
         }
 
-        _ => Err(format!("unknown input event: {key}")),
+        _ => Err(format!("unknown input event: {key}").into_boxed_str()),
     }
 }
 
-pub fn read_config_file_to_string() -> Result<String, &'static str> {
+pub fn read_config_file_to_string() -> Result<Box<str>, &'static str> {
     let home = unsafe {
         getenv(c"HOME").unwrap_or_else(|| {
-        warn!("HOME environment variable is not set, searching for config in current directory");
+        log::warn!("HOME environment variable is not set, searching for config in current directory");
         c"."
     })
     };
@@ -184,7 +213,7 @@ pub fn read_config_file_to_string() -> Result<String, &'static str> {
 
     let c_path = CString::new(path).map_err(|_| "invalid path")?;
 
-    let fd = fs::open(&c_path, OFlags::RDONLY, Mode::empty())
+    let fd = fs::open(&*c_path, OFlags::RDONLY, Mode::empty())
         .map_err(|_| "Could not open config file")?;
 
     let mut buf = vec![0u8; 8192];
@@ -203,10 +232,12 @@ pub fn read_config_file_to_string() -> Result<String, &'static str> {
     }
     buf.truncate(total_read);
 
-    String::from_utf8(buf).map_err(|_| "File is not valid UTF-8")
+    String::from_utf8(buf)
+        .map(|s| s.into_boxed_str())
+        .map_err(|_| "File is not valid UTF-8")
 }
 
-pub fn load_config() -> Result<BTreeMap<String, GapConfig>, &'static str> {
+pub fn load_config() -> Result<BTreeMap<Box<str>, GapConfig>, &'static str> {
     let toml_str = read_config_file_to_string()?;
 
     let config =

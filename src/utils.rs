@@ -1,7 +1,10 @@
 use core::ffi::CStr;
 
-use tracing::warn;
+use smallvec::SmallVec;
+use smallvec::ToSmallVec as _;
 use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
+
+use crate::log;
 
 /// Manual getenv implementation from an extern environ variable.
 ///
@@ -71,7 +74,9 @@ where
     } else {
         let socket_name =
             unsafe { getenv(c"WAYLAND_DISPLAY") }.unwrap_or_else(|| {
-                warn!("WAYLAND_DISPLAY is not set! Defaulting to wayland-0");
+                log::warn!(
+                    "WAYLAND_DISPLAY is not set! Defaulting to wayland-0"
+                );
                 c"wayland-0"
             });
 
@@ -81,13 +86,13 @@ where
             let mut socket_fullpath = match unsafe {
                 getenv(c"XDG_RUNTIME_DIR")
             } {
-                Some(socket_path) => socket_path.to_bytes().to_vec(),
+                Some(socket_path) => socket_path.to_bytes().to_smallvec(),
                 None => {
                     use rustix::path::DecInt;
-                    warn!(
+                    log::warn!(
                         "XDG_RUNTIME_DIR is not set! Defaulting to /run/user/UID"
                     );
-                    let mut v = ::alloc::vec::Vec::from(b"/run/user/");
+                    let mut v = SmallVec::<[u8; 32]>::from_slice(b"/run/user/");
                     let uid = rustix::process::getuid();
                     v.extend_from_slice(DecInt::new(uid.as_raw()).as_bytes());
                     v
@@ -138,4 +143,24 @@ fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
     }
 
     Some(fd)
+}
+
+#[cold]
+pub fn is_output_match(
+    pattern: Option<&str>,
+    name: &str,
+    description: &str,
+) -> bool {
+    let Some(pattern) = pattern else {
+        return true;
+    };
+
+    let output_matched =
+        name.contains(pattern) || description.contains(pattern);
+
+    if !output_matched {
+        log::warn!("no outputs matched pattern `{pattern}`");
+    }
+
+    output_matched
 }

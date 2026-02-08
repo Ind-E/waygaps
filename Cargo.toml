@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 atoi = { version = "2.0.0", default-features = false }
-memchr = { version = "2.8.0", default-features = false }
+memchr = { version = "2", default-features = false }
 origin = { version = "0.26.2", default-features = false, features = [
     "origin-start",
     "signal",
@@ -25,8 +25,34 @@ waybackend = { version = "0.10.0", default-features = false }
 [build-dependencies]
 waybackend-scanner = { version = "0.10.0", features = ["build-script"] }
 
+# hack to make nix vendor deps correctly
+[dev-dependencies]
+addr2line = "=0.25.1"
+cfg-if = "=1.0.4"
+dlmalloc = "=0.2.11"
+fortanix-sgx-abi = "0.6.1"
+getopts = "=0.2.24"
+hashbrown = "=0.16.1"
+hermit-abi = "=0.5.2"
+libc = "=0.2.178"
+memchr = "=2.7.6"
+moto-rt = "=0.16.0"
+object = "=0.37.3"
+r-efi = "=5.3.0"
+r-efi-alloc = "=2.1.0"
+rustc-demangle = "=0.1.27"
+rustc-literal-escaper = "=0.0.7"
+unwinding = "=0.2.8"
+vex-sdk = "=0.27.1"
+wasi = "=0.11.1"
+wasi_1 = { version = "=0.14.4", package = "wasi" }
+
+[profile.dev]
+panic = "abort"
 
 [profile.release]
+panic = "abort"
+opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true

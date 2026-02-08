@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::{
-    ffi::CStr,
+    ffi::{CStr, c_char, c_int},
     mem::MaybeUninit,
     sync::atomic::{self, AtomicBool},
 };
@@ -107,9 +107,9 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn origin_main(
-    _: isize,
-    _: *mut *mut u8,
-    envp: *mut *mut u8,
+    _argc: c_int,
+    _argv: *const *const c_char,
+    envp: *const *const c_char,
 ) -> core::ffi::c_int {
     unsafe { environ = envp.cast() };
     // lower our process niceness priority. It's ok to delay updating the gaps
@@ -163,7 +163,7 @@ pub extern "C" fn origin_main(
     setup_signals();
 
     let pid = process::getpid();
-    log::debug!("pid: {}", pid);
+    log::info!("pid: {}", pid);
 
     let mut app = App::new(backend, objman, configs);
 
@@ -211,11 +211,8 @@ pub extern "C" fn origin_main(
 
         app.backend.flush().unwrap();
 
-        let ready_events = match epoll::wait(
-            &epoll_fd,
-            &mut event_buffer,
-            None,
-        ) {
+        let ready_events = match epoll::wait(&epoll_fd, &mut event_buffer, None)
+        {
             Ok((ready_events, _unused_space)) => ready_events,
             Err(rustix::io::Errno::INTR | rustix::io::Errno::WOULDBLOCK) => {
                 continue;

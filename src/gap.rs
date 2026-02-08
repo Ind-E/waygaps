@@ -217,6 +217,7 @@ impl WayGap {
     }
 
     /// Size is given in pixels
+    #[inline]
     pub fn expand_shm(&mut self, size: u32) {
         if size * 4 > self.bufsize {
             rustix::io::retry_on_intr(|| {
@@ -227,6 +228,7 @@ impl WayGap {
         }
     }
 
+    #[inline]
     pub fn draw_debug(&mut self) {
         let mmap =
             MmappedSlice::new(&mut self.shm, self.bufsize as usize, 0).unwrap();
@@ -272,7 +274,8 @@ pub fn bg(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum WaylandObject {
     // standard stuff
     Display,

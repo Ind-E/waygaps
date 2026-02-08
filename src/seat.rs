@@ -2,7 +2,6 @@ use waybackend::types::ObjectId;
 
 use crate::wayland::wl_pointer::Axis;
 
-#[derive(Clone, Debug)]
 pub struct Pointer {
     pub id: ObjectId,
 

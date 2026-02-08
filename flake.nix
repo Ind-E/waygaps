@@ -22,12 +22,6 @@
         overlays = [ (import rust-overlay) ];
       };
 
-      runtimeLibs = with pkgs; [
-        libxkbcommon
-        vulkan-loader
-        wayland
-      ];
-
       commonNativeBuildInputs = with pkgs; [
         pkg-config
       ];
@@ -38,10 +32,10 @@
       ];
 
       rust-toolchain = pkgs.rust-bin.nightly.latest.default.override {
-        extensions = [
-          "rust-src"
-        ];
+        extensions = [ "rust-src" ];
+        targets = [ "x86_64-unknown-linux-gnu" ];
       };
+
       rust-toolchain-dev = rust-toolchain.override {
         extensions = [
           "rust-src"
@@ -54,21 +48,11 @@
         cargo = rust-toolchain;
       };
 
-      env = {
-        RUSTFLAGS = toString [
-          "-C link-arg=-Wl,-rpath,${lib.makeLibraryPath runtimeLibs}"
-          "-C panic=abort"
-        ];
-        CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
-        CARGO_UNSTABLE_BUILD_STD = "core,alloc,panic_abort";
-      };
-
       Cargo.toml = (fromTOML (builtins.readFile ./Cargo.toml)).package;
 
       waygaps = rustPlatform.buildRustPackage {
         pname = Cargo.toml.name;
         inherit (Cargo.toml) version;
-        inherit env;
 
         strictDeps = true;
 
@@ -79,6 +63,7 @@
             ./build.rs
             ./Cargo.toml
             ./Cargo.lock
+            ./.cargo/config.toml
             ./protocols
           ];
         };
@@ -89,22 +74,17 @@
           lockFile = ./Cargo.lock;
         };
 
-        nativeBuildInputs = commonNativeBuildInputs ++ [ pkgs.makeWrapper ];
-
+        nativeBuildInputs = commonNativeBuildInputs;
         buildInputs = commonBuildInputs;
 
-        postInstall = ''
-          wrapProgram $out/bin/waygaps \
-          --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
-        '';
-
+        meta = {
+          platforms = [ system ];
+        };
       };
 
     in
     {
       devShells.${system}.default = pkgs.mkShell {
-        inherit env;
-
         nativeBuildInputs = commonNativeBuildInputs ++ [ rust-toolchain-dev ];
         buildInputs = commonBuildInputs;
       };

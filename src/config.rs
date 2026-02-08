@@ -13,7 +13,8 @@ use crate::log;
 use crate::wayland::zwlr_layer_shell_v1;
 use crate::{utils::getenv, wayland};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum InputEvent {
     Enter,
     Exit,
@@ -22,6 +23,7 @@ pub enum InputEvent {
     Axis(Axis, i32),
 }
 
+//TODO: remove clone impl
 #[derive(Clone, Debug)]
 pub struct GapConfig {
     pub output: Option<Box<str>>,
@@ -51,30 +53,37 @@ impl Default for GapConfig {
     }
 }
 
+#[inline]
 const fn default_anchor() -> Anchor {
     Anchor::TopLeft
 }
 
+#[inline]
 const fn default_size() -> u32 {
     10
 }
 
+#[inline]
 const fn default_margin() -> i32 {
     0
 }
 
+#[inline]
 const fn default_activation_force() -> u32 {
     1000
 }
 
+#[inline]
 const fn default_ignore_exclusive_zone() -> bool {
     true
 }
 
+#[inline]
 const fn default_layer() -> zwlr_layer_shell_v1::Layer {
     zwlr_layer_shell_v1::Layer::overlay
 }
 
+#[inline]
 const fn default_debug_color() -> Color {
     Color::new(25, 128, 16, 16)
 }
@@ -239,7 +248,7 @@ pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
     if let Err(e) = core::str::from_utf8(mmap) {
         log::error!("invalid UTF-8: {e}");
         panic!();
-    };
+    }
 
     let mut gaps = Vec::new();
 
@@ -257,7 +266,6 @@ pub fn read_config() -> BTreeMap<Box<str>, GapConfig> {
     gaps.into_iter().collect()
 }
 
-#[derive(Clone, Copy)]
 enum Scope {
     Outer,
     Inner,
@@ -445,10 +453,11 @@ fn parse_config(
 /// for other mouse buttons, use a tool like wev
 ///
 /// Example - 272 is left mouse button
-/// [     15:     wl_pointer] button: serial: 446213; time: 59602276; button: 272 (left), state: 1 (pressed)
-/// [     15:     wl_pointer] frame
-/// [     15:     wl_pointer] button: serial: 446214; time: 59602336; button: 272 (left), state: 0 (released)
-/// [     15:     wl_pointer] frame
+/// [     15:     wl_pointer] button: serial: 446213; time: 59602276; button:
+/// 272 (left), state: 1 (pressed) [     15:     wl_pointer] frame
+/// [     15:     wl_pointer] button: serial: 446214; time: 59602336; button:
+/// 272 (left), state: 0 (released) [     15:     wl_pointer] frame
+#[inline]
 fn parse_command_input(key: &[u8]) -> InputEvent {
     match key {
         b"enter" => InputEvent::Enter,
@@ -482,10 +491,12 @@ fn parse_command_input(key: &[u8]) -> InputEvent {
     }
 }
 
+#[inline]
 fn utf8(data: &[u8]) -> &str {
     unsafe { core::str::from_utf8_unchecked(data) }
 }
 
+#[inline]
 fn trim_whitespace(s: &[u8]) -> &[u8] {
     let start = s
         .iter()
@@ -499,6 +510,7 @@ fn trim_whitespace(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
+#[inline]
 fn trim_quotes(s: &[u8]) -> &[u8] {
     let start = memchr(b'"', s).unwrap_or(0);
     let end = memrchr(b'"', s).unwrap_or(s.len());
@@ -510,6 +522,7 @@ fn trim_quotes(s: &[u8]) -> &[u8] {
     &s[start + 1..end]
 }
 
+#[inline]
 fn before_first_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memchr2(b' ', b'\t', s) {
         log::trace!(
@@ -524,6 +537,7 @@ fn before_first_whitespace(s: &[u8]) -> &[u8] {
     }
 }
 
+#[inline]
 fn after_last_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memrchr2(b' ', b'\t', s) {
         log::trace!(
@@ -538,6 +552,7 @@ fn after_last_whitespace(s: &[u8]) -> &[u8] {
     }
 }
 
+#[inline]
 fn parse_anchor(s: &[u8]) -> Anchor {
     match s {
         b"left" => Anchor::Left,
@@ -559,6 +574,7 @@ fn parse_anchor(s: &[u8]) -> Anchor {
     }
 }
 
+#[inline]
 fn parse_layer(s: &[u8]) -> zwlr_layer_shell_v1::Layer {
     use zwlr_layer_shell_v1::Layer as wlrLayer;
     match s {
@@ -577,6 +593,7 @@ fn parse_layer(s: &[u8]) -> zwlr_layer_shell_v1::Layer {
     }
 }
 
+#[inline]
 fn parse_debug_color(s: &[u8]) -> Color {
     let (n, digits) = u32::from_radix_16_checked(s);
 

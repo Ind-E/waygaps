@@ -13,21 +13,20 @@ use core::{
 use rustix::{
     self,
     event::epoll,
-    fd::{BorrowedFd, OwnedFd},
     process::{self},
 };
 use smallvec::SmallVec;
 use waybackend::{
     Waybackend,
     objman::{self, ObjectManager},
-    types::ObjectId,
+    types::{ObjectId, WlFixed},
 };
 
 use crate::{
-    config::{GapConfig, InputEvent, read_config},
+    config::{Anchor, GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
-    utils::{getenv, is_output_match, parse_args},
+    utils::{is_output_match, parse_args},
 };
 
 mod config;
@@ -162,6 +161,7 @@ pub extern "C" fn origin_main(
                 (wl_compositor, Compositor),
                 (wl_shm, Shm),
                 (zwlr_layer_shell_v1, LayerShell),
+                (zwp_relative_pointer_manager_v1, RelativePointerMgr),
             );
         },
     )
@@ -264,6 +264,11 @@ pub extern "C" fn origin_main(
                             (Surface, wl_surface),
                             (Output, wl_output),
                             (Pointer, wl_pointer),
+                            (RelativePointer, zwp_relative_pointer_v1),
+                            (
+                                RelativePointerMgr,
+                                zwp_relative_pointer_manager_v1
+                            ),
                             (LayerShell, zwlr_layer_shell_v1),
                             (LayerSurface, zwlr_layer_surface_v1),
                         );
@@ -273,10 +278,6 @@ pub extern "C" fn origin_main(
                     log::error!("epoll returned unexpected event: {otherwise}");
                 }
             }
-        }
-
-        if !app.preview {
-            app.redraw();
         }
     }
 
@@ -297,13 +298,12 @@ struct App {
     compositor: ObjectId,
     shm: ObjectId,
     layer_shell: ObjectId,
-    waygaps: SmallVec<[WayGap; 8]>,
-    seats: SmallVec<[Seat; 4]>,
+    relative_ptr_mgr: ObjectId,
+    waygaps: SmallVec<[WayGap; 6]>,
+    seats: SmallVec<[Seat; 2]>,
     pending_outputs: SmallVec<[PendingOutput; 4]>,
     configs: BTreeMap<&'static str, GapConfig>,
 
-    pipe_read: OwnedFd,
-    pipe_write: OwnedFd,
     preview: bool,
 }
 
@@ -318,12 +318,8 @@ impl App {
         let compositor = objman.get_first(WaylandObject::Compositor).unwrap();
         let layer_shell = objman.get_first(WaylandObject::LayerShell).unwrap();
         let shm = objman.get_first(WaylandObject::Shm).unwrap();
-
-        let (pipe_read, pipe_write) = rustix::pipe::pipe_with(
-            rustix::pipe::PipeFlags::NONBLOCK
-                .union(rustix::pipe::PipeFlags::CLOEXEC),
-        )
-        .unwrap();
+        let relative_ptr_mgr =
+            objman.get_first(WaylandObject::RelativePointerMgr).unwrap();
 
         App {
             backend,
@@ -332,12 +328,11 @@ impl App {
             compositor,
             shm,
             layer_shell,
+            relative_ptr_mgr,
             waygaps: SmallVec::with_capacity(1),
             seats: SmallVec::with_capacity(1),
             pending_outputs: SmallVec::new(),
             configs,
-            pipe_read,
-            pipe_write,
             preview,
         }
     }
@@ -356,21 +351,6 @@ impl App {
 
         self.seats.push(Seat::new(registry_name, wl_seat));
     }
-
-    fn redraw(&mut self) {
-        for waygap in self.waygaps.iter_mut() {
-            if waygap.redraw
-                && waygap.frame_callback.is_none()
-                && let Err(e) = waygap.draw_frame(
-                    &mut self.backend,
-                    self.shm,
-                    &mut self.objman,
-                )
-            {
-                log::error!("failed to draw frame: {e}");
-            }
-        }
-    }
 }
 
 // not a method to avoid borrowing shenanigans
@@ -382,7 +362,7 @@ fn create_waygap(
     registry_name: u32,
     wl_output: ObjectId,
     config: &GapConfig,
-    waygaps: &mut SmallVec<[WayGap; 8]>,
+    waygaps: &mut SmallVec<[WayGap; 6]>,
 ) {
     match WayGap::new(
         backend,
@@ -450,7 +430,6 @@ impl wayland::wl_registry::EvHandler for App {
     ) {
         match interface {
             wayland::wl_seat::NAME => self.create_seat(name, version),
-            // wayland::wl_output::NAME => self.create_waygap(name, version),
             _ => (),
         }
     }
@@ -490,14 +469,8 @@ impl wayland::wl_callback::EvHandler for App {
     /// Notify the client when the related request is done.
     ///
     /// THIS IS A DESTRUCTOR
-    fn done(&mut self, sender_id: ObjectId, _: u32) {
-        if let Some(waygap) = self
-            .waygaps
-            .iter_mut()
-            .find(|waygap| waygap.frame_callback == Some(sender_id))
-        {
-            waygap.frame_callback = None;
-        }
+    fn done(&mut self, _sender_id: ObjectId, _: u32) {
+        // NoOp (needed for rountrip)
     }
 }
 
@@ -540,25 +513,46 @@ impl wayland::wl_seat::EvHandler for App {
             if capabilities.contains(wayland::wl_seat::Capability::POINTER)
                 && seat.pointer.is_none()
             {
-                let id = self.objman.create(WaylandObject::Pointer);
+                let ptr_id = self.objman.create(WaylandObject::Pointer);
                 wayland::wl_seat::req::get_pointer(
                     &mut self.backend,
                     seat.wl_seat,
-                    id,
+                    ptr_id,
                 )
                 .unwrap();
-                seat.pointer = Some(Pointer::new(id));
+
+                let mut pointer = Pointer::new(ptr_id);
+
+                let relative_ptr_id =
+                    self.objman.create(WaylandObject::RelativePointer);
+                wayland::zwp_relative_pointer_manager_v1::req::get_relative_pointer(
+                    &mut self.backend,
+                    self.relative_ptr_mgr,
+                    relative_ptr_id,
+                    ptr_id,
+                ).unwrap();
+
+                pointer.relative_pointer_id = Some(relative_ptr_id);
+
+                seat.pointer = Some(pointer);
             } else if !capabilities
                 .contains(wayland::wl_seat::Capability::POINTER)
-                && seat.pointer.is_some()
+                && let Some(ptr) = seat.pointer.take()
             {
+                if let Some(rel_ptr_id) = ptr.relative_pointer_id {
+                    wayland::zwp_relative_pointer_v1::req::destroy(
+                        &mut self.backend,
+                        rel_ptr_id,
+                    )
+                    .unwrap();
+                }
+
                 // we no longer have a pointer, release the previous object
                 wayland::wl_pointer::req::release(
                     &mut self.backend,
                     seat.wl_seat,
                 )
                 .unwrap();
-                seat.pointer = None;
             }
         }
     }
@@ -779,6 +773,9 @@ impl wayland::wl_output::EvHandler for App {
     /// changes to the output properties to be seen as
     /// atomic, even if they happen via multiple events.
     fn done(&mut self, sender_id: ObjectId) {
+        if self.waygaps.iter().any(|gap| gap.wl_output == sender_id) {
+            return;
+        }
         let (name, description, registry_name) = {
             let Some(pending) =
                 self.pending_outputs.iter().find(|o| o.id == sender_id)
@@ -910,8 +907,8 @@ impl wayland::wl_pointer::EvHandler for App {
         sender_id: ObjectId,
         serial: u32,
         surface: ObjectId,
-        _surface_x: waybackend::types::WlFixed,
-        _surface_y: waybackend::types::WlFixed,
+        _surface_x: WlFixed,
+        _surface_y: WlFixed,
     ) {
         let current_waygap = 'brk: {
             for (i, gap) in self.waygaps.iter().enumerate() {
@@ -922,7 +919,7 @@ impl wayland::wl_pointer::EvHandler for App {
             return;
         };
 
-        match get_pointer_seat(&mut self.seats, sender_id) {
+        match get_pointer(&mut self.seats, sender_id) {
             Some(ptr) => {
                 ptr.enter_serial = serial;
                 ptr.current_waygap = current_waygap;
@@ -952,7 +949,7 @@ impl wayland::wl_pointer::EvHandler for App {
     /// The leave notification is sent before the enter notification
     /// for the new focus.
     fn leave(&mut self, sender_id: ObjectId, _serial: u32, _surface: ObjectId) {
-        if let Some(ptr) = get_pointer_seat(&mut self.seats, sender_id) {
+        if let Some(ptr) = get_pointer(&mut self.seats, sender_id) {
             if let Some(waygap) = self.waygaps.get(ptr.current_waygap as usize)
             {
                 for event in waygap.commands.iter() {
@@ -973,60 +970,12 @@ impl wayland::wl_pointer::EvHandler for App {
     /// focused surface.
     fn motion(
         &mut self,
-        sender_id: ObjectId,
-        time: u32,
-        surface_x: waybackend::types::WlFixed,
-        surface_y: waybackend::types::WlFixed,
+        _sender_id: ObjectId,
+        _time: u32,
+        _surface_x: WlFixed,
+        _surface_y: WlFixed,
     ) {
-        let (ptr, waygap) = match get_pointer_seat(&mut self.seats, sender_id) {
-            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(bar) => (ptr, bar),
-                None => return,
-            },
-            None => return,
-        };
-
-        let x = i32::from(surface_x);
-        let y = i32::from(surface_y);
-
-        let dt = if ptr.last_time == 0 {
-            0
-        } else {
-            time.saturating_sub(ptr.last_time)
-        };
-
-        let dx = (x - ptr.last_x).abs();
-        let dy = (y - ptr.last_y).abs();
-
-        let logical_w = (waygap.width / crate::BUFFER_SCALE) as i32;
-        let logical_h = (waygap.height / crate::BUFFER_SCALE) as i32;
-
-        if x <= 0 || x >= logical_w - 1 {
-            ptr.pressure_x += (dx * 10) + (5 * dt) as i32;
-        } else {
-            ptr.pressure_x = 0;
-        }
-
-        if y <= 0 || y >= logical_h - 1 {
-            ptr.pressure_y += (dy * 10) + (5 * dt) as i32;
-        } else {
-            ptr.pressure_y = 0;
-        }
-
-        let max_pressure = core::cmp::max(ptr.pressure_x, ptr.pressure_y);
-
-        if max_pressure > waygap.activation_force as i32 {
-            ptr.pressure_x = -(waygap.activation_force as i32);
-            ptr.pressure_y = -(waygap.activation_force as i32);
-
-            ptr.should_trigger_edge = true;
-        }
-
-        ptr.last_x = x;
-        ptr.last_y = y;
-        ptr.last_time = time;
-
-        log::debug!("pressure: {}, {}", ptr.pressure_x, ptr.pressure_y);
+        // NoOp
     }
 
     /// pointer button event
@@ -1053,7 +1002,7 @@ impl wayland::wl_pointer::EvHandler for App {
         button: u32,
         state: wayland::wl_pointer::ButtonState,
     ) {
-        if let Some(ptr) = get_pointer_seat(&mut self.seats, sender_id) {
+        if let Some(ptr) = get_pointer(&mut self.seats, sender_id) {
             ptr.button = match state {
                 wayland::wl_pointer::ButtonState::released => 0,
                 wayland::wl_pointer::ButtonState::pressed => button,
@@ -1084,7 +1033,7 @@ impl wayland::wl_pointer::EvHandler for App {
         _sender_id: ObjectId,
         _time: u32,
         _axis: wayland::wl_pointer::Axis,
-        _value: waybackend::types::WlFixed,
+        _value: WlFixed,
     ) {
         // NoOp
     }
@@ -1126,9 +1075,9 @@ impl wayland::wl_pointer::EvHandler for App {
     /// wl_pointer.enter event being split across multiple wl_pointer.frame
     /// groups.
     fn frame(&mut self, sender_id: ObjectId) {
-        let (ptr, waygap) = match get_pointer_seat(&mut self.seats, sender_id) {
+        let (ptr, waygap) = match get_pointer(&mut self.seats, sender_id) {
             Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(bar) => (ptr, bar),
+                Some(waygap) => (ptr, waygap),
                 None => return,
             },
             None => return,
@@ -1274,7 +1223,7 @@ impl wayland::wl_pointer::EvHandler for App {
         axis: wayland::wl_pointer::Axis,
         discrete: i32,
     ) {
-        let ptr = match get_pointer_seat(&mut self.seats, sender_id) {
+        let ptr = match get_pointer(&mut self.seats, sender_id) {
             Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
                 Some(_waygap) => ptr,
                 None => return,
@@ -1319,7 +1268,7 @@ impl wayland::wl_pointer::EvHandler for App {
         axis: wayland::wl_pointer::Axis,
         value120: i32,
     ) {
-        let ptr = match get_pointer_seat(&mut self.seats, sender_id) {
+        let ptr = match get_pointer(&mut self.seats, sender_id) {
             Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
                 Some(_waygap) => ptr,
                 None => return,
@@ -1378,13 +1327,145 @@ impl wayland::wl_pointer::EvHandler for App {
     }
 }
 
-fn get_pointer_seat(
-    seats: &mut [Seat],
-    ptr_id: ObjectId,
-) -> Option<&mut Pointer> {
+impl wayland::zwp_relative_pointer_v1::EvHandler for App {
+    /// relative pointer motion
+    ///
+    /// Relative x/y pointer motion from the pointer of the seat associated with
+    /// this object.
+    ///
+    /// A relative motion is in the same dimension as regular wl_pointer motion
+    /// events, except they do not represent an absolute position. For example,
+    /// moving a pointer from (x, y) to (x', y') would have the equivalent
+    /// relative motion (x' - x, y' - y). If a pointer motion caused the
+    /// absolute pointer position to be clipped by for example the edge of the
+    /// monitor, the relative motion is unaffected by the clipping and will
+    /// represent the unclipped motion.
+    ///
+    /// This event also contains non-accelerated motion deltas. The
+    /// non-accelerated delta is, when applicable, the regular pointer motion
+    /// delta as it was before having applied motion acceleration and other
+    /// transformations such as normalization.
+    ///
+    /// Note that the non-accelerated delta does not represent 'raw' events as
+    /// they were read from some device. Pointer motion acceleration is device-
+    /// and configuration-specific and non-accelerated deltas and accelerated
+    /// deltas may have the same value on some devices.
+    ///
+    /// Relative motions are not coupled to wl_pointer.motion events, and can be
+    /// sent in combination with such events, but also independently. There may
+    /// also be scenarios where wl_pointer.motion is sent, but there is no
+    /// relative motion. The order of an absolute and relative motion event
+    /// originating from the same physical motion is not guaranteed.
+    ///
+    /// If the client needs button events or focus state, it can receive them
+    /// from a wl_pointer object of the same seat that the wp_relative_pointer
+    /// object is associated with.
+    fn relative_motion(
+        &mut self,
+        sender_id: ObjectId,
+        utime_hi: u32,
+        utime_lo: u32,
+        _dx: WlFixed,
+        _dy: WlFixed,
+        dx_unaccel: WlFixed,
+        dy_unaccel: WlFixed,
+    ) {
+        let ptr = match get_relative_pointer(&mut self.seats, sender_id) {
+            Some(ptr) => ptr,
+            None => return,
+        };
+
+        let waygap = match self.waygaps.get(ptr.current_waygap as usize) {
+            Some(waygap) => waygap,
+            None => return,
+        };
+
+        let time: u64 = ((utime_hi as u64) << 32) | (utime_lo as u64);
+        let dt = time.saturating_sub(ptr.last_time);
+
+        if dt > 100 {
+            ptr.pressure_x = 0.0;
+            ptr.pressure_y = 0.0;
+        }
+
+        let dx = f64::from(dx_unaccel);
+        let dy = f64::from(dy_unaccel);
+
+        if matches!(
+            waygap.anchor,
+            Anchor::Left | Anchor::TopLeft | Anchor::BottomLeft
+        ) {
+            if dx < 0.0 {
+                ptr.pressure_x += dx.abs();
+            } else if dx > 1.0 {
+                ptr.pressure_x = 0.0;
+            }
+        } else if matches!(
+            waygap.anchor,
+            Anchor::Right | Anchor::TopRight | Anchor::BottomRight
+        ) {
+            if dx > 0.0 {
+                ptr.pressure_x += dx.abs();
+            } else if dx < -1.0 {
+                ptr.pressure_x = 0.0;
+            }
+        }
+
+        if matches!(
+            waygap.anchor,
+            Anchor::Top | Anchor::TopLeft | Anchor::TopRight
+        ) {
+            if dy < 0.0 {
+                ptr.pressure_y += dy.abs();
+            } else if dy > 1.0 {
+                ptr.pressure_y = 0.0;
+            }
+        } else if matches!(
+            waygap.anchor,
+            Anchor::Bottom | Anchor::BottomLeft | Anchor::BottomRight
+        ) {
+            if dy > 0.0 {
+                ptr.pressure_y += dy.abs();
+            } else if dy < -1.0 {
+                ptr.pressure_y = 0.0;
+            }
+        }
+
+        if ptr.pressure_x > waygap.activation_force as f64
+            || ptr.pressure_y > waygap.activation_force as f64
+        {
+            if time - ptr.last_trigger_time > 200000 {
+                ptr.should_trigger_edge = true;
+                ptr.last_trigger_time = time;
+            }
+            ptr.pressure_x = 0.0;
+            ptr.pressure_y = 0.0;
+        }
+
+        ptr.last_time = time;
+    }
+}
+
+impl wayland::zwp_relative_pointer_manager_v1::EvHandler for App {}
+
+fn get_pointer(seats: &mut [Seat], ptr_id: ObjectId) -> Option<&mut Pointer> {
     for seat in seats {
         if let Some(ptr) = seat.pointer.as_mut()
             && ptr.id == ptr_id
+        {
+            return Some(ptr);
+        }
+    }
+    None
+}
+
+fn get_relative_pointer(
+    seats: &mut [Seat],
+    relative_ptr_id: ObjectId,
+) -> Option<&mut Pointer> {
+    for seat in seats {
+        if let Some(ptr) = seat.pointer.as_mut()
+            && ptr.relative_pointer_id == Some(relative_ptr_id)
         {
             return Some(ptr);
         }
@@ -1452,7 +1533,7 @@ impl wayland::zwlr_layer_surface_v1::EvHandler for App {
             waygap.configured = true;
 
             if self.preview {
-                waygap.draw_debug();
+                waygap.draw_preview();
             }
 
             if let Err(e) =
@@ -1534,30 +1615,6 @@ fn setup_signals() {
 fn shell_command(command: &CStr) {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => unsafe {
-            let args: [*const u8; 5] = [
-                c"env".as_ptr().cast(),
-                c"bash".as_ptr().cast(),
-                c"-c".as_ptr().cast(),
-                command.as_ptr().cast(),
-                core::ptr::null(),
-            ];
-            let err = rustix::runtime::execve(
-                c"/usr/bin/env",
-                args.as_ptr(),
-                environ.cast(),
-            );
-            panic!("execve failed: {err}");
-        },
-        Err(e) => log::error!("fork failed: {e}"),
-        _ => {}
-    }
-}
-
-#[inline(never)]
-fn shell_command_capture_output(command: &CStr, pipe_write: BorrowedFd) {
-    match unsafe { rustix::runtime::kernel_fork() } {
-        Ok(rustix::runtime::Fork::Child(_)) => unsafe {
-            rustix::stdio::dup2_stdout(pipe_write).unwrap();
             let args: [*const u8; 5] = [
                 c"env".as_ptr().cast(),
                 c"bash".as_ptr().cast(),

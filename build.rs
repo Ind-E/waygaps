@@ -20,6 +20,10 @@ fn main() {
                 "protocols",
                 "wlr-layer-shell-unstable-v1.xml",
             ])),
+            WaylandProtocol::Local(PathBuf::from_iter(&[
+                "protocols",
+                "relative-pointer-unstable-v1.xml",
+            ])),
         ],
         &file,
     );

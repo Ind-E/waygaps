@@ -19,11 +19,11 @@ pub struct WayGap {
 
     pub wl_surface: ObjectId,
     pub layer_surface: ObjectId,
-
-    pub frame_callback: Option<ObjectId>,
+    pub wl_output: ObjectId,
 
     pub width: u32,
     pub height: u32,
+    pub anchor: Anchor,
 
     bufsize: u32,
 
@@ -138,11 +138,11 @@ impl WayGap {
 
             wl_surface,
             layer_surface,
-
-            frame_callback: None,
+            wl_output,
 
             width,
             height,
+            anchor: config.anchor,
 
             bufsize: 0,
 
@@ -167,7 +167,6 @@ impl WayGap {
     ) -> rustix::io::Result<()> {
         let pool = objman.create(WaylandObject::ShmPool);
         let buffer = objman.create(WaylandObject::Buffer);
-        let frame = objman.create(WaylandObject::Callback);
 
         wayland::wl_shm::req::create_pool(
             backend,
@@ -209,10 +208,8 @@ impl WayGap {
             self.width as i32,
             self.height as i32,
         )?;
-        wayland::wl_surface::req::frame(backend, self.wl_surface, frame)?;
         wayland::wl_surface::req::commit(backend, self.wl_surface)?;
         self.redraw = false;
-        self.frame_callback = Some(frame);
         Ok(())
     }
 
@@ -229,7 +226,7 @@ impl WayGap {
     }
 
     #[inline]
-    pub fn draw_debug(&mut self) {
+    pub fn draw_preview(&mut self) {
         let mmap =
             MmappedSlice::new(&mut self.shm, self.bufsize as usize, 0).unwrap();
 
@@ -293,4 +290,8 @@ pub enum WaylandObject {
     // layer shell
     LayerShell,
     LayerSurface,
+
+    // relative pointer
+    RelativePointer,
+    RelativePointerMgr,
 }

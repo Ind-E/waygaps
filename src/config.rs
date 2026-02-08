@@ -69,7 +69,7 @@ const fn default_margin() -> i32 {
 
 #[inline]
 const fn default_activation_force() -> u32 {
-    1000
+    25
 }
 
 #[inline]
@@ -125,7 +125,7 @@ impl core::fmt::Display for Color {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Anchor {
     TopLeft,
     TopRight,

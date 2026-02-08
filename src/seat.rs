@@ -4,12 +4,12 @@ use crate::wayland::wl_pointer::Axis;
 
 pub struct Pointer {
     pub id: ObjectId,
+    pub relative_pointer_id: Option<ObjectId>,
 
-    pub last_x: i32,
-    pub last_y: i32,
-    pub pressure_x: i32,
-    pub pressure_y: i32,
-    pub last_time: u32,
+    pub pressure_x: f64,
+    pub pressure_y: f64,
+    pub last_time: u64,
+    pub last_trigger_time: u64,
     pub should_trigger_edge: bool,
 
     pub button: u32,
@@ -26,12 +26,12 @@ impl Pointer {
     pub fn new(id: ObjectId) -> Self {
         Self {
             id,
+            relative_pointer_id: None,
 
-            last_x: 0,
-            last_y: 0,
-            pressure_x: 0,
-            pressure_y: 0,
+            pressure_x: 0.0,
+            pressure_y: 0.0,
             last_time: 0,
+            last_trigger_time: 0,
             should_trigger_edge: false,
 
             button: 0,

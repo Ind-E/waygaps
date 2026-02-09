@@ -17,7 +17,7 @@ use crate::{utils::getenv, wayland};
 #[derive(PartialEq, Debug)]
 pub enum InputEvent {
     Enter,
-    Exit,
+    Leave,
     Edge,
     Button(u32),
     Axis(Axis, i32),
@@ -451,28 +451,21 @@ fn parse_config(
     }
 }
 
-/// for other mouse buttons, use a tool like wev
-///
-/// Example - 272 is left mouse button
-/// [     15:     wl_pointer] button: serial: 446213; time: 59602276; button:
-/// 272 (left), state: 1 (pressed) [     15:     wl_pointer] frame
-/// [     15:     wl_pointer] button: serial: 446214; time: 59602336; button:
-/// 272 (left), state: 0 (released) [     15:     wl_pointer] frame
 #[inline]
 fn parse_command_input(key: &[u8]) -> InputEvent {
     match key {
         b"enter" => InputEvent::Enter,
-        b"exit" | b"leave" => InputEvent::Exit,
+        b"leave" => InputEvent::Leave,
         b"edge" => InputEvent::Edge,
         b"scroll-up" => InputEvent::Axis(Axis::vertical_scroll, -1),
         b"scroll-down" => InputEvent::Axis(Axis::vertical_scroll, 1),
         b"scroll-left" => InputEvent::Axis(Axis::horizontal_scroll, -1),
         b"scroll-right" => InputEvent::Axis(Axis::horizontal_scroll, 1),
-        b"btn-left" => InputEvent::Button(272),
-        b"btn-right" => InputEvent::Button(273),
-        b"btn-middle" => InputEvent::Button(274),
+        b"mouse-left" => InputEvent::Button(272),
+        b"mouse-right" => InputEvent::Button(273),
+        b"mouse-middle" => InputEvent::Button(274),
 
-        _ if key.starts_with(b"btn-") => {
+        _ if key.starts_with(b"mouse-") => {
             let num = &key[4..];
             let id = atoi::atoi(num).unwrap_or_else(|| {
                 log::error!(

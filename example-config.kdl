@@ -7,7 +7,7 @@ hot-corner-1 {
 
   commands {
     enter "notify-send enter"
-    exit "notify-send exit"
+    leave "notify-send leave"
     edge "notify-send edge"
     scroll-up "notify-send up"
     scroll-down "notify-send down"

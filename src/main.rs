@@ -956,7 +956,7 @@ impl wayland::wl_pointer::EvHandler for App {
             if let Some(waygap) = self.waygaps.get(ptr.current_waygap as usize)
             {
                 for event in waygap.commands.iter() {
-                    if let (InputEvent::Exit, cmd) = event {
+                    if let (InputEvent::Leave, cmd) = event {
                         shell_command(cmd);
                         break;
                     }

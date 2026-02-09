@@ -104,13 +104,23 @@ impl WayGap {
             )?;
         }
 
+        let (top, right, bottom, left) = match config.anchor {
+            Anchor::Left | Anchor::Right => {
+                (config.margin, 0, config.margin, 0)
+            }
+            Anchor::Top | Anchor::Bottom => {
+                (0, config.margin, 0, config.margin)
+            }
+            _ => (0, 0, 0, 0),
+        };
+
         wayland::zwlr_layer_surface_v1::req::set_margin(
             backend,
             layer_surface,
-            config.margin,
-            config.margin,
-            config.margin,
-            config.margin,
+            top,
+            right,
+            bottom,
+            left,
         )?;
 
         wayland::zwlr_layer_surface_v1::req::set_layer(

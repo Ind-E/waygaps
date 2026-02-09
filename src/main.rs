@@ -3,7 +3,6 @@
 
 extern crate alloc;
 
-use alloc::collections::btree_map::BTreeMap;
 use core::{
     ffi::{CStr, c_char, c_int},
     mem::MaybeUninit,
@@ -128,7 +127,7 @@ pub extern "C" fn origin_main(
     let _ = rustix::process::nice(1);
 
     let configs = read_config(args.config_path);
-    log::debug!("config: {configs:#?}");
+    log::trace!("config: {configs:#?}");
 
     let (mut backend, mut objman, mut receiver) =
         utils::connect(WaylandObject::Display);
@@ -291,6 +290,8 @@ struct PendingOutput {
     description: &'static str,
 }
 
+pub type Configs = SmallVec<[(&'static str, GapConfig); 6]>;
+
 struct App {
     backend: waybackend::Waybackend,
     objman: objman::ObjectManager<WaylandObject>,
@@ -301,8 +302,8 @@ struct App {
     relative_ptr_mgr: ObjectId,
     waygaps: SmallVec<[WayGap; 6]>,
     seats: SmallVec<[Seat; 2]>,
-    pending_outputs: SmallVec<[PendingOutput; 4]>,
-    configs: BTreeMap<&'static str, GapConfig>,
+    pending_outputs: SmallVec<[PendingOutput; 2]>,
+    configs: Configs,
 
     preview: bool,
 }
@@ -311,7 +312,7 @@ impl App {
     fn new(
         backend: waybackend::Waybackend,
         objman: objman::ObjectManager<WaylandObject>,
-        configs: BTreeMap<&'static str, GapConfig>,
+        configs: Configs,
         preview: bool,
     ) -> Self {
         let registry = objman.get_first(WaylandObject::Registry).unwrap();
@@ -776,27 +777,29 @@ impl wayland::wl_output::EvHandler for App {
         if self.waygaps.iter().any(|gap| gap.wl_output == sender_id) {
             return;
         }
-        let (name, description, registry_name) = {
-            let Some(pending) =
-                self.pending_outputs.iter().find(|o| o.id == sender_id)
-            else {
-                return;
-            };
 
-            (pending.name, pending.description, pending.registry_name)
+        let Some(index) =
+            self.pending_outputs.iter().position(|o| o.id == sender_id)
+        else {
+            return;
         };
 
-        for (cfg_name, cfg) in self.configs.iter() {
-            if is_output_match(cfg.output, &name, &description) {
-                log::info!("opening config `{cfg_name}` on output `{name}`");
+        let output = self.pending_outputs.swap_remove(index);
+
+        for (cfg_name, cfg) in &self.configs {
+            if is_output_match(cfg.output, output.name, output.description) {
+                log::info!(
+                    "opening config `{cfg_name}` on output `{}`",
+                    output.name
+                );
                 create_waygap(
                     &mut self.backend,
                     &mut self.objman,
                     self.compositor,
                     self.layer_shell,
-                    registry_name,
+                    output.registry_name,
                     sender_id,
-                    &cfg,
+                    cfg,
                     &mut self.waygaps,
                 );
             }
@@ -1005,7 +1008,7 @@ impl wayland::wl_pointer::EvHandler for App {
         if let Some(ptr) = get_pointer(&mut self.seats, sender_id) {
             ptr.button = match state {
                 wayland::wl_pointer::ButtonState::released => 0,
-                wayland::wl_pointer::ButtonState::pressed => button,
+                wayland::wl_pointer::ButtonState::pressed => button as u16,
             }
         }
     }
@@ -1095,9 +1098,9 @@ impl wayland::wl_pointer::EvHandler for App {
         if ptr.value120 <= -120 {
             ptr.value120 += 120;
             for event in waygap.commands.iter() {
-                if let (InputEvent::Axis(axis, dir), cmd) = event
-                    && *axis == ptr.axis
-                    && *dir < 0
+                if let (InputEvent::Scroll(scroll), cmd) = event
+                    && scroll.on_axis(ptr.axis)
+                    && !scroll.is_positive()
                 {
                     shell_command(cmd);
                 }
@@ -1105,9 +1108,9 @@ impl wayland::wl_pointer::EvHandler for App {
         } else if ptr.value120 >= 120 {
             ptr.value120 -= 120;
             for event in waygap.commands.iter() {
-                if let (InputEvent::Axis(axis, dir), cmd) = event
-                    && *axis == ptr.axis
-                    && *dir > 0
+                if let (InputEvent::Scroll(scroll), cmd) = event
+                    && scroll.on_axis(ptr.axis)
+                    && scroll.is_positive()
                 {
                     shell_command(cmd);
                 }
@@ -1231,7 +1234,7 @@ impl wayland::wl_pointer::EvHandler for App {
             None => return,
         };
 
-        ptr.axis = axis;
+        ptr.axis = axis.into();
         match discrete {
             ..0 => ptr.value120 = -120,
             1.. => ptr.value120 = 120,
@@ -1277,7 +1280,7 @@ impl wayland::wl_pointer::EvHandler for App {
         };
 
         ptr.value120 += value120;
-        ptr.axis = axis;
+        ptr.axis = axis.into();
     }
 
     /// axis relative physical direction event

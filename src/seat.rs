@@ -1,6 +1,25 @@
 use waybackend::types::ObjectId;
 
-use crate::wayland::wl_pointer::Axis;
+use crate::wayland;
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Axis {
+    Vertical,
+    #[allow(unused)]
+    // incorecctly marked as unused because it's
+    // only created by transmute
+    Horizontal,
+}
+
+impl From<wayland::wl_pointer::Axis> for Axis {
+    #[inline]
+    fn from(value: wayland::wl_pointer::Axis) -> Self {
+        // SAFETY: wl_pointer::Axis is repr(u32) and has variants
+        // in the same order
+        unsafe { core::mem::transmute(value as u8) }
+    }
+}
 
 pub struct Pointer {
     pub id: ObjectId,
@@ -12,7 +31,7 @@ pub struct Pointer {
     pub last_trigger_time: u64,
     pub should_trigger_edge: bool,
 
-    pub button: u32,
+    pub button: u16,
     pub enter_serial: u32,
     /// represents high-resolution wheel scroll information, with each multiple
     /// of 120 representing one logical scroll step (a wheel detent).
@@ -37,7 +56,7 @@ impl Pointer {
             button: 0,
             enter_serial: 0,
             value120: 0,
-            axis: Axis::vertical_scroll,
+            axis: Axis::Vertical,
             current_waygap: u32::MAX,
         }
     }

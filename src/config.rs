@@ -1,4 +1,3 @@
-use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use core::ffi::{CStr, c_void};
 
@@ -7,33 +6,95 @@ use memchr::{Memchr, memchr, memchr2, memrchr, memrchr2};
 use rustix::fd::OwnedFd;
 use rustix::fs::{self, Mode, OFlags};
 use smallvec::SmallVec;
-use wayland::wl_pointer::Axis;
 
-use crate::log;
+use crate::seat::Axis;
+use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
-use crate::{utils::getenv, wayland};
+use crate::{Configs, log};
 
-#[repr(u8)]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum InputEvent {
     Enter,
     Leave,
     Edge,
-    Button(u32),
-    Axis(Axis, i32),
+    // This can be a u16 instead of a u32 because button codes
+    // above 0xFFFF are currently undefined (but may be used in future
+    // versions of the wl_pointer protocol)
+    Button(u16),
+    Scroll(Scroll),
+}
+
+#[repr(u8)]
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum Scroll {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl Scroll {
+    #[inline]
+    pub fn on_axis(self, axis: Axis) -> bool {
+        matches!(self, Scroll::Left | Scroll::Right)
+            && matches!(axis, Axis::Horizontal)
+            || matches!(self, Scroll::Up | Scroll::Down)
+                && matches!(axis, Axis::Vertical)
+    }
+
+    #[inline]
+    pub fn is_positive(self) -> bool {
+        matches!(self, Scroll::Right | Scroll::Down)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum Layer {
+    Background,
+    Bottom,
+    Top,
+    Overlay,
+}
+
+impl core::fmt::Display for Layer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Layer::Overlay => "overlay",
+                Layer::Top => "top",
+                Layer::Bottom => "bottom",
+                Layer::Background => "background",
+            }
+        )
+    }
+}
+use zwlr_layer_shell_v1::Layer as wlrLayer;
+
+impl From<Layer> for wlrLayer {
+    #[inline]
+    fn from(value: Layer) -> Self {
+        // SAFETY: wlrLayer has repr(u32) and has variants in
+        // the same order
+        unsafe { core::mem::transmute(value as u32) }
+    }
 }
 
 #[derive(Debug)]
 pub struct GapConfig {
+    // only used to find outputs that contain user's "regex",
+    // no need to validate utf8
     pub output: Option<&'static [u8]>,
     pub anchor: Anchor,
     pub size: u32,
     pub margin: i32,
-    pub activation_force: u32,
+    pub activation_force: u16,
     pub ignore_exclusive_zone: bool,
-    pub layer: zwlr_layer_shell_v1::Layer,
+    pub layer: Layer,
     pub preview_color: Color,
-    pub commands: SmallVec<[(InputEvent, &'static CStr); 8]>,
+    pub commands: SmallVec<[(InputEvent, &'static CStr); 4]>,
 }
 
 impl Default for GapConfig {
@@ -68,7 +129,7 @@ const fn default_margin() -> i32 {
 }
 
 #[inline]
-const fn default_activation_force() -> u32 {
+const fn default_activation_force() -> u16 {
     25
 }
 
@@ -78,8 +139,8 @@ const fn default_ignore_exclusive_zone() -> bool {
 }
 
 #[inline]
-const fn default_layer() -> zwlr_layer_shell_v1::Layer {
-    zwlr_layer_shell_v1::Layer::overlay
+const fn default_layer() -> Layer {
+    Layer::Overlay
 }
 
 #[inline]
@@ -186,9 +247,7 @@ fn open_file(path: &CStr) -> OwnedFd {
     }
 }
 
-pub fn read_config(
-    config_path: Option<&'static CStr>,
-) -> BTreeMap<&'static str, GapConfig> {
+pub fn read_config(config_path: Option<&'static CStr>) -> Configs {
     let fd = if let Some(path) = config_path {
         open_file(path)
     } else {
@@ -269,7 +328,8 @@ pub fn read_config(
     gaps.into_iter().collect()
 }
 
-enum Scope {
+#[repr(u8)]
+pub enum Scope {
     Outer,
     Inner,
     Command,
@@ -365,7 +425,7 @@ fn parse_config(
                     default_margin()
                 }),
                 b"activation-force" => {
-                    gaps[current_gap].1.activation_force = u32::from_radix_10_checked(
+                    gaps[current_gap].1.activation_force = u16::from_radix_10_checked(
                         after_last_whitespace(line),
                     )
                     .0
@@ -457,16 +517,16 @@ fn parse_command_input(key: &[u8]) -> InputEvent {
         b"enter" => InputEvent::Enter,
         b"leave" => InputEvent::Leave,
         b"edge" => InputEvent::Edge,
-        b"scroll-up" => InputEvent::Axis(Axis::vertical_scroll, -1),
-        b"scroll-down" => InputEvent::Axis(Axis::vertical_scroll, 1),
-        b"scroll-left" => InputEvent::Axis(Axis::horizontal_scroll, -1),
-        b"scroll-right" => InputEvent::Axis(Axis::horizontal_scroll, 1),
+        b"scroll-up" => InputEvent::Scroll(Scroll::Up),
+        b"scroll-down" => InputEvent::Scroll(Scroll::Down),
+        b"scroll-left" => InputEvent::Scroll(Scroll::Left),
+        b"scroll-right" => InputEvent::Scroll(Scroll::Right),
         b"mouse-left" => InputEvent::Button(272),
         b"mouse-right" => InputEvent::Button(273),
         b"mouse-middle" => InputEvent::Button(274),
 
         _ if key.starts_with(b"mouse-") => {
-            let num = &key[4..];
+            let num = &key[6..];
             let id = atoi::atoi(num).unwrap_or_else(|| {
                 log::error!(
                     "invalid button id: '{}' in command '{}'",
@@ -588,13 +648,12 @@ fn parse_anchor(s: &[u8]) -> Anchor {
 }
 
 #[inline]
-fn parse_layer(s: &[u8]) -> zwlr_layer_shell_v1::Layer {
-    use zwlr_layer_shell_v1::Layer as wlrLayer;
+fn parse_layer(s: &[u8]) -> Layer {
     match s {
-        b"overlay" => wlrLayer::overlay,
-        b"top" => wlrLayer::top,
-        b"bottom" => wlrLayer::bottom,
-        b"background" => wlrLayer::background,
+        b"overlay" => Layer::Overlay,
+        b"top" => Layer::Top,
+        b"bottom" => Layer::Bottom,
+        b"background" => Layer::Background,
         other => {
             log::warn!(
                 "{} is not a valid layer, defaulting to {}",

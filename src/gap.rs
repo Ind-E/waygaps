@@ -15,8 +15,9 @@ use crate::{
 const NAMESPACE: &str = "waygaps";
 
 pub struct WayGap {
-    pub registry_name: u32,
+    pub commands: &'static [(InputEvent, &'static CStr)],
 
+    pub registry_name: u32,
     pub wl_surface: ObjectId,
     pub layer_surface: ObjectId,
     pub wl_output: ObjectId,
@@ -32,9 +33,8 @@ pub struct WayGap {
     pub configured: bool,
     pub redraw: bool,
 
-    pub commands: &'static [(InputEvent, &'static CStr)],
     pub preview_color: Color,
-    pub activation_force: u32,
+    pub activation_force: u16,
 }
 
 impl WayGap {
@@ -126,7 +126,7 @@ impl WayGap {
         wayland::zwlr_layer_surface_v1::req::set_layer(
             backend,
             layer_surface,
-            config.layer,
+            config.layer.into(),
         )?;
 
         wayland::zwlr_layer_surface_v1::req::set_anchor(

@@ -54,8 +54,9 @@ impl talc::OomHandler for OomHandler {
     ) -> Result<(), ()> {
         // We need at least ~1KB for talc's metadata. We allocate twice that to
         // be sure. Besides that, we round our allocation up to the next
-        // group of 4KB, to try and match the system page size
-        let len = (layout.size() + 256).next_multiple_of(4096);
+        // group of 8KB, so that we need only 1 allocation in the average case,
+        // and use (hopefully) 2 pages of memory
+        let len = (layout.size() + 256).next_multiple_of(8192);
 
         // Note: as an optimization, we could use mremap on linux to extend
         // the allocation size "in_place", for a efficient realloc.
@@ -288,7 +289,7 @@ struct PendingOutput {
     description: &'static str,
 }
 
-pub type Config = SmallVec<[(ArenaStr, GapConfig); 6]>;
+pub type Config = alloc::vec::Vec<(ArenaStr, GapConfig)>;
 
 struct App {
     backend: waybackend::Waybackend,
@@ -298,9 +299,9 @@ struct App {
     shm: ObjectId,
     layer_shell: ObjectId,
     relative_ptr_mgr: ObjectId,
-    waygaps: SmallVec<[WayGap; 6]>,
-    seats: SmallVec<[Seat; 2]>,
-    pending_outputs: SmallVec<[PendingOutput; 2]>,
+    waygaps: alloc::vec::Vec<WayGap>,
+    seats: alloc::vec::Vec<Seat>,
+    pending_outputs: alloc::vec::Vec<PendingOutput>,
     config: Config,
 
     preview: bool,
@@ -328,9 +329,9 @@ impl App {
             shm,
             layer_shell,
             relative_ptr_mgr,
-            waygaps: SmallVec::new(),
-            seats: SmallVec::new(),
-            pending_outputs: SmallVec::new(),
+            waygaps: alloc::vec::Vec::new(),
+            seats: alloc::vec::Vec::new(),
+            pending_outputs: alloc::vec::Vec::new(),
             config,
             preview,
         }
@@ -361,7 +362,7 @@ fn create_waygap(
     registry_name: u32,
     wl_output: ObjectId,
     config: &GapConfig,
-    waygaps: &mut SmallVec<[WayGap; 6]>,
+    waygaps: &mut alloc::vec::Vec<WayGap>,
 ) {
     match WayGap::new(
         backend,
@@ -1386,7 +1387,7 @@ impl wayland::zwp_relative_pointer_v1::EvHandler for App {
         let time: u64 = ((utime_hi as u64) << 32) | (utime_lo as u64);
         let dt = time.saturating_sub(ptr.last_time);
 
-        if dt > 100 {
+        if dt > 400 {
             ptr.pressure_x = 0.0;
             ptr.pressure_y = 0.0;
         }
@@ -1437,7 +1438,7 @@ impl wayland::zwp_relative_pointer_v1::EvHandler for App {
         if ptr.pressure_x > waygap.activation_force as f64
             || ptr.pressure_y > waygap.activation_force as f64
         {
-            if time - ptr.last_trigger_time > 200000 {
+            if time - ptr.last_trigger_time > 250000 {
                 ptr.should_trigger_edge = true;
                 ptr.last_trigger_time = time;
             }

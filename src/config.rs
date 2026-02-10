@@ -90,7 +90,7 @@ pub struct GapConfig {
     pub ignore_exclusive_zone: bool,
     pub layer: Layer,
     pub preview_color: Color,
-    pub commands: SmallVec<[(InputEvent, ArenaStr); 4]>,
+    pub commands: SmallVec<[(InputEvent, ArenaStr); 2]>,
 }
 
 impl Default for GapConfig {
@@ -472,6 +472,7 @@ fn arena_alloc_str(inner: &[u8]) -> ArenaStr {
         let len = inner.len() + 1;
 
         if offset + len > 4096 {
+            log::error!("strings in config file too big");
             origin::program::exit(1);
         }
 

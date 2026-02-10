@@ -98,7 +98,7 @@ where
                     log::warn!(
                         "XDG_RUNTIME_DIR is not set! Defaulting to /run/user/UID"
                     );
-                    let mut v = SmallVec::<[u8; 32]>::from_slice(b"/run/user/");
+                    let mut v = SmallVec::<[u8; 16]>::from_slice(b"/run/user/");
                     let uid = rustix::process::getuid();
                     v.extend_from_slice(DecInt::new(uid.as_raw()).as_bytes());
                     v

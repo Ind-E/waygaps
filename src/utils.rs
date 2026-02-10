@@ -1,11 +1,11 @@
 use core::ffi::CStr;
-use core::ffi::c_char;
 use core::ffi::c_int;
 
 use smallvec::SmallVec;
 use smallvec::ToSmallVec as _;
 use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
 
+use crate::config::ArenaStr;
 use crate::log;
 
 /// Manual getenv implementation from an extern environ variable.
@@ -154,13 +154,15 @@ fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
 
 #[cold]
 pub fn is_output_match(
-    pattern: Option<&[u8]>,
+    pattern: Option<ArenaStr>,
     name: &str,
     description: &str,
 ) -> bool {
     let Some(pattern) = pattern else {
         return true;
     };
+
+    let pattern = pattern.as_slice();
     use memchr::memmem::find;
 
     let output_matched = find(pattern, name.as_bytes()).is_some()
@@ -181,7 +183,7 @@ pub struct Args {
     pub config_path: Option<&'static CStr>,
 }
 
-pub fn parse_args(argc: c_int, argv: *const *const c_char) -> Args {
+pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
     let mut args = Args {
         preview: false,
         config_path: None,

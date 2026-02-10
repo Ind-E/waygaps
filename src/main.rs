@@ -5,7 +5,6 @@
 extern crate alloc;
 
 use core::{
-    ffi::{CStr, c_char, c_int},
     mem::MaybeUninit,
     sync::atomic::{self, AtomicBool},
 };
@@ -23,7 +22,7 @@ use waybackend::{
 };
 
 use crate::{
-    config::{Anchor, GapConfig, InputEvent, read_config},
+    config::{Anchor, ArenaStr, GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
     utils::{is_output_match, parse_args},
@@ -55,9 +54,8 @@ impl talc::OomHandler for OomHandler {
     ) -> Result<(), ()> {
         // We need at least ~1KB for talc's metadata. We allocate twice that to
         // be sure. Besides that, we round our allocation up to the next
-        // group of 1MB, so that we waste less space to the metadata,
-        // and have to do less allocations overall
-        let len = ((1 << 11) + layout.size()).next_multiple_of(1 << 20);
+        // group of 4KB, to try and match the system page size
+        let len = (layout.size() + 256).next_multiple_of(4096);
 
         // Note: as an optimization, we could use mremap on linux to extend
         // the allocation size "in_place", for a efficient realloc.
@@ -78,7 +76,7 @@ impl talc::OomHandler for OomHandler {
                 unsafe {
                     talc.claim(talc::Span::from_base_size(ptr.cast(), len))?
                 };
-                log::trace!("new allocation of size: {len}");
+                log::debug!("new allocation of size: {len}");
                 Ok(())
             }
             _ => Err(()),
@@ -110,16 +108,16 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn origin_main(
-    argc: c_int,
-    argv: *const *const c_char,
-    envp: *const *const c_char,
-) -> c_int {
+    argc: core::ffi::c_int,
+    argv: *const *const i8,
+    envp: *const *const i8,
+) -> core::ffi::c_int {
     unsafe { environ = envp.cast() };
 
     #[cfg(not(debug_assertions))]
     log::init(log::Filter::Info);
     #[cfg(debug_assertions)]
-    log::init(log::Filter::Trace);
+    log::init(log::Filter::Debug);
 
     let args = parse_args(argc, argv);
 
@@ -127,8 +125,7 @@ pub extern "C" fn origin_main(
     // if the system is under heavy load
     let _ = rustix::process::nice(1);
 
-    let configs = read_config(args.config_path);
-    log::trace!("config: {configs:#?}");
+    let config = read_config(args.config_path);
 
     let (mut backend, mut objman, mut receiver) =
         utils::connect(WaylandObject::Display);
@@ -172,7 +169,7 @@ pub extern "C" fn origin_main(
     let pid = process::getpid();
     log::info!("pid: {}", pid);
 
-    let mut app = App::new(backend, objman, configs, args.preview);
+    let mut app = App::new(backend, objman, config, args.preview);
 
     for (registry_name, version) in outputs {
         let wl_output = app.objman.create(WaylandObject::Output);
@@ -291,7 +288,7 @@ struct PendingOutput {
     description: &'static str,
 }
 
-pub type Configs = SmallVec<[(&'static str, GapConfig); 6]>;
+pub type Config = SmallVec<[(ArenaStr, GapConfig); 6]>;
 
 struct App {
     backend: waybackend::Waybackend,
@@ -304,7 +301,7 @@ struct App {
     waygaps: SmallVec<[WayGap; 6]>,
     seats: SmallVec<[Seat; 2]>,
     pending_outputs: SmallVec<[PendingOutput; 2]>,
-    configs: Configs,
+    config: Config,
 
     preview: bool,
 }
@@ -313,7 +310,7 @@ impl App {
     fn new(
         backend: waybackend::Waybackend,
         objman: objman::ObjectManager<WaylandObject>,
-        configs: Configs,
+        config: Config,
         preview: bool,
     ) -> Self {
         let registry = objman.get_first(WaylandObject::Registry).unwrap();
@@ -331,10 +328,10 @@ impl App {
             shm,
             layer_shell,
             relative_ptr_mgr,
-            waygaps: SmallVec::with_capacity(1),
-            seats: SmallVec::with_capacity(1),
+            waygaps: SmallVec::new(),
+            seats: SmallVec::new(),
             pending_outputs: SmallVec::new(),
-            configs,
+            config,
             preview,
         }
     }
@@ -355,7 +352,7 @@ impl App {
     }
 }
 
-// not a method to avoid borrowing shenanigans
+// not a method on App to avoid borrowing shenanigans
 fn create_waygap(
     backend: &mut Waybackend,
     objman: &mut ObjectManager<WaylandObject>,
@@ -787,10 +784,11 @@ impl wayland::wl_output::EvHandler for App {
 
         let output = self.pending_outputs.swap_remove(index);
 
-        for (cfg_name, cfg) in &self.configs {
+        for (cfg_name, cfg) in &self.config {
             if is_output_match(cfg.output, output.name, output.description) {
                 log::info!(
-                    "opening config `{cfg_name}` on output `{}`",
+                    "opening config `{}` on output `{}`",
+                    cfg_name.as_str(),
                     output.name
                 );
                 create_waygap(
@@ -890,6 +888,7 @@ impl wayland::wl_output::EvHandler for App {
         if let Some(out) =
             self.pending_outputs.iter_mut().find(|o| o.id == sender_id)
         {
+            // this probably doesn't segfault if more than output is connected
             let static_description =
                 unsafe { core::mem::transmute(description) };
             out.description = static_description;
@@ -933,7 +932,7 @@ impl wayland::wl_pointer::EvHandler for App {
                 {
                     for event in waygap.commands.iter() {
                         if let (InputEvent::Enter, cmd) = event {
-                            shell_command(cmd);
+                            shell_command(*cmd);
                             break;
                         }
                     }
@@ -958,7 +957,7 @@ impl wayland::wl_pointer::EvHandler for App {
             {
                 for event in waygap.commands.iter() {
                     if let (InputEvent::Leave, cmd) = event {
-                        shell_command(cmd);
+                        shell_command(*cmd);
                         break;
                     }
                 }
@@ -1091,7 +1090,7 @@ impl wayland::wl_pointer::EvHandler for App {
             if let (InputEvent::Button(btn), cmd) = event
                 && *btn == ptr.button
             {
-                shell_command(cmd);
+                shell_command(*cmd);
             }
         }
         ptr.button = 0;
@@ -1103,7 +1102,7 @@ impl wayland::wl_pointer::EvHandler for App {
                     && scroll.on_axis(ptr.axis)
                     && !scroll.is_positive()
                 {
-                    shell_command(cmd);
+                    shell_command(*cmd);
                 }
             }
         } else if ptr.value120 >= 120 {
@@ -1113,7 +1112,7 @@ impl wayland::wl_pointer::EvHandler for App {
                     && scroll.on_axis(ptr.axis)
                     && scroll.is_positive()
                 {
-                    shell_command(cmd);
+                    shell_command(*cmd);
                 }
             }
         }
@@ -1121,7 +1120,7 @@ impl wayland::wl_pointer::EvHandler for App {
         if ptr.should_trigger_edge {
             for event in waygap.commands.iter() {
                 if let (InputEvent::Edge, cmd) = event {
-                    shell_command(cmd);
+                    shell_command(*cmd);
                     break;
                 }
             }
@@ -1616,7 +1615,7 @@ fn setup_signals() {
 }
 
 #[inline(never)]
-fn shell_command(command: &CStr) {
+fn shell_command(command: ArenaStr) {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => unsafe {
             let args: [*const u8; 5] = [

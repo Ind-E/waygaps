@@ -6,7 +6,7 @@ static IS_TTY: AtomicBool = AtomicBool::new(false);
 static FILTER: AtomicU8 = AtomicU8::new(Filter::Fatal as u8);
 
 #[cfg(debug_assertions)]
-pub const MIN_LEVEL: Filter = Filter::Trace;
+pub const MIN_LEVEL: Filter = Filter::Debug;
 
 #[cfg(not(debug_assertions))]
 pub const MIN_LEVEL: Filter = Filter::Info;
@@ -14,12 +14,11 @@ pub const MIN_LEVEL: Filter = Filter::Info;
 #[repr(u8)]
 #[derive(Clone, Copy)]
 pub enum Filter {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4,
-    Fatal = 5,
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3,
+    Fatal = 4,
 }
 
 pub fn init(filter: Filter) {
@@ -46,7 +45,6 @@ pub fn log(filter: Filter, msg: core::fmt::Arguments) {
             Filter::Warn =>  "\x1b[33m[WARN]\x1b[0m  ",
             Filter::Info =>  "\x1b[32m[INFO]\x1b[0m  ",
             Filter::Debug => "\x1b[36m[DEBUG]\x1b[0m ",
-            Filter::Trace => "[TRACE] ",
         }
     } else {
         match filter {
@@ -55,7 +53,6 @@ pub fn log(filter: Filter, msg: core::fmt::Arguments) {
             Filter::Warn =>  "[WARN]  ",
             Filter::Info =>  "[INFO]  ",
             Filter::Debug => "[DEBUG] ",
-            Filter::Trace => "[TRACE] ",
         }
     };
 
@@ -74,15 +71,6 @@ pub fn log(filter: Filter, msg: core::fmt::Arguments) {
         rustix::io::IoSlice::new(b"\n"),
     ];
     _ = rustix::io::writev(stderr, &bufs);
-}
-
-#[macro_export]
-macro_rules! _trace {
-    ($($arg:tt)+) => {
-        if const { $crate::log::MIN_LEVEL as u8 <= $crate::log::Filter::Trace as u8 } {
-            $crate::log::log($crate::log::Filter::Trace, format_args!($($arg)+))
-        }
-    }
 }
 
 #[macro_export]
@@ -134,5 +122,4 @@ pub use _debug as debug;
 pub use _error as error;
 pub use _fatal as fatal;
 pub use _info as info;
-pub use _trace as trace;
 pub use _warn as warn;

@@ -1,16 +1,14 @@
-use alloc::vec::Vec;
-use core::ffi::{CStr, c_void};
-
-use atoi::{FromRadix10Checked, FromRadix16Checked};
-use memchr::{Memchr, memchr, memchr2, memrchr, memrchr2};
+use atoi::{FromRadix10Checked as _, FromRadix16Checked as _};
+use memchr::{memchr, memchr2, memrchr, memrchr2};
 use rustix::fd::OwnedFd;
-use rustix::fs::{self, Mode, OFlags};
+use rustix::fs::{self};
 use smallvec::SmallVec;
 
+use crate::gap::Color;
 use crate::seat::Axis;
 use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
-use crate::{Configs, log};
+use crate::{Config, log};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum InputEvent {
@@ -21,30 +19,30 @@ pub enum InputEvent {
     // above 0xFFFF are currently undefined (but may be used in future
     // versions of the wl_pointer protocol)
     Button(u16),
-    Scroll(Scroll),
+    Scroll(ScrollDir),
 }
 
 #[repr(u8)]
 #[derive(PartialEq, Debug, Clone, Copy)]
-pub enum Scroll {
+pub enum ScrollDir {
     Left,
     Right,
     Up,
     Down,
 }
 
-impl Scroll {
+impl ScrollDir {
     #[inline]
     pub fn on_axis(self, axis: Axis) -> bool {
-        matches!(self, Scroll::Left | Scroll::Right)
+        matches!(self, ScrollDir::Left | ScrollDir::Right)
             && matches!(axis, Axis::Horizontal)
-            || matches!(self, Scroll::Up | Scroll::Down)
+            || matches!(self, ScrollDir::Up | ScrollDir::Down)
                 && matches!(axis, Axis::Vertical)
     }
 
     #[inline]
     pub fn is_positive(self) -> bool {
-        matches!(self, Scroll::Right | Scroll::Down)
+        matches!(self, ScrollDir::Right | ScrollDir::Down)
     }
 }
 
@@ -84,9 +82,7 @@ impl From<Layer> for wlrLayer {
 
 #[derive(Debug)]
 pub struct GapConfig {
-    // only used to find outputs that contain user's "regex",
-    // no need to validate utf8
-    pub output: Option<&'static [u8]>,
+    pub output: Option<ArenaStr>,
     pub anchor: Anchor,
     pub size: u32,
     pub margin: i32,
@@ -94,7 +90,7 @@ pub struct GapConfig {
     pub ignore_exclusive_zone: bool,
     pub layer: Layer,
     pub preview_color: Color,
-    pub commands: SmallVec<[(InputEvent, &'static CStr); 4]>,
+    pub commands: SmallVec<[(InputEvent, ArenaStr); 4]>,
 }
 
 impl Default for GapConfig {
@@ -148,44 +144,6 @@ const fn default_preview_color() -> Color {
     Color::new(25, 128, 16, 16)
 }
 
-#[repr(C, align(4))]
-/// Color representation in BGRA in native endian.
-/// Can be safely transmuted into a u32.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Color {
-    pub b: u8,
-    pub g: u8,
-    pub r: u8,
-    pub a: u8,
-}
-
-impl Color {
-    #[inline]
-    pub const fn new(a: u8, r: u8, g: u8, b: u8) -> Self {
-        Self { b, r, g, a }
-    }
-
-    #[inline]
-    pub const fn as_u32(self) -> u32 {
-        // SAFETY: this is safe because Color has the same size and alignment as
-        // a u32
-        unsafe { core::mem::transmute(self) }
-    }
-}
-
-impl core::fmt::Display for Color {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{:02}{:02}{:02}{:02}",
-            self.r as u32 >> 24 & 0xFF,
-            self.g as u32 >> 16 & 0xFF,
-            self.b as u32 >> 8 & 0xFF,
-            self.a as u32 & 0xFF,
-        )
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Anchor {
     TopLeft,
@@ -234,20 +192,23 @@ impl core::fmt::Display for zwlr_layer_shell_v1::Layer {
 }
 
 #[inline(always)]
-fn open_file(path: &CStr) -> OwnedFd {
-    match fs::open(path, OFlags::RDONLY, Mode::empty()) {
+fn open_file(path: &core::ffi::CStr) -> OwnedFd {
+    match fs::open(path, fs::OFlags::RDONLY, fs::Mode::empty()) {
         Ok(fd) => {
             log::info!("opening config file: `{}`", path.display());
             fd
         }
         Err(e) => {
-            log::error!("error opening config file at `{}`: {e}", path.display());
+            log::error!(
+                "error opening config file at `{}`: {e}",
+                path.display()
+            );
             origin::program::exit(1);
         }
     }
 }
 
-pub fn read_config(config_path: Option<&'static CStr>) -> Configs {
+pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     let fd = if let Some(path) = config_path {
         open_file(path)
     } else {
@@ -275,8 +236,8 @@ pub fn read_config(config_path: Option<&'static CStr>) -> Configs {
         path_buf[len] = 0;
         let path_buf = &path_buf[0..=len];
 
-        let path = unsafe { CStr::from_bytes_with_nul_unchecked(path_buf) };
-        log::debug!("config path: {path:?}");
+        let path =
+            unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(path_buf) };
         open_file(path)
     };
 
@@ -288,44 +249,45 @@ pub fn read_config(config_path: Option<&'static CStr>) -> Configs {
         }
     };
 
-    let ptr = core::ptr::null_mut::<c_void>();
+    let empty_config = Config::new();
 
-    let mmap: &'static [u8] = unsafe {
-        use rustix::mm;
-        match mm::mmap(
-            ptr,
-            len,
-            mm::ProtFlags::READ,
-            mm::MapFlags::PRIVATE,
-            fd,
-            0,
-        ) {
-            Ok(mmap) => core::slice::from_raw_parts(mmap as *const u8, len),
-            Err(e) => {
-                log::error!("memmap failed: {e}");
-                origin::program::exit(1);
+    if len > 4096 {
+        log::warn!("config file is large, using mmap");
+        let ptr = unsafe {
+            use rustix::mm;
+            match mm::mmap(
+                core::ptr::null_mut(),
+                len,
+                mm::ProtFlags::READ,
+                mm::MapFlags::PRIVATE,
+                fd,
+                0,
+            ) {
+                Ok(mmap_ptr) => mmap_ptr,
+                Err(e) => {
+                    log::error!("memmap failed: {e}");
+                    origin::program::exit(1);
+                }
             }
+        };
+
+        let mmap =
+            unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+
+        let config = parse_config(mmap, empty_config);
+
+        unsafe {
+            let _ = rustix::mm::munmap(ptr, len);
         }
-    };
 
-    // validate once, then use unsafe from_utf8_unchecked
-    if let Err(e) = core::str::from_utf8(mmap) {
-        log::error!("invalid UTF-8: {e}");
-        origin::program::exit(1);
+        config
+    } else {
+        let mut buffer = [0u8; 4096];
+
+        let bytes_read = rustix::io::read(&fd, &mut buffer).unwrap();
+
+        parse_config(&buffer[..bytes_read], empty_config)
     }
-
-    let mut gaps = Vec::new();
-
-    parse_config(
-        mmap,
-        memchr::memchr_iter(b'\n', mmap),
-        0,
-        &mut gaps,
-        0,
-        Scope::Outer,
-    );
-
-    gaps.into_iter().collect()
 }
 
 #[repr(u8)]
@@ -335,203 +297,222 @@ pub enum Scope {
     Command,
 }
 
-fn parse_config(
-    mmap: &'static [u8],
-    mut newline_pos_iter: Memchr,
-    line_start: usize,
-    gaps: &mut Vec<(&'static str, GapConfig)>,
-    current_gap: usize,
+static mut STRING_ARENA: [u8; 4096] = [0u8; 4096];
+static mut ARENA_OFFSET: usize = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ArenaStr(u16);
+
+impl ArenaStr {
+    #[inline(always)]
+    pub fn as_ptr(self) -> *const core::ffi::c_char {
+        unsafe {
+            let base = core::ptr::addr_of!(STRING_ARENA) as *const u8;
+            base.add(self.0 as usize) as *const core::ffi::c_char
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_cstr(self) -> &'static core::ffi::CStr {
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+    }
+
+    #[inline(always)]
+    pub fn as_slice(self) -> &'static [u8] {
+        unsafe {
+            let base = self.as_ptr() as *const u8;
+            let remaining_limit = 4096 - self.0 as usize;
+            let len = memchr::memchr(
+                0,
+                core::slice::from_raw_parts(base, remaining_limit),
+            )
+            .unwrap_or(0);
+            core::slice::from_raw_parts(base, len)
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_str(self) -> &'static str {
+        unsafe { core::str::from_utf8_unchecked(self.as_slice()) }
+    }
+}
+
+pub fn parse_config(data: &[u8], mut config: Config) -> Config {
+    let mut line_start = 0;
+    let mut cur_waygap = 0;
+    let mut scope = Scope::Outer;
+
+    for newline_pos in memchr::memchr_iter(b'\n', data) {
+        let line = trim_whitespace(&data[line_start..newline_pos]);
+        (scope, cur_waygap) =
+            process_line(line, scope, &mut config, cur_waygap);
+        line_start = newline_pos + 1;
+    }
+    if line_start < data.len() {
+        process_line(&data[line_start..], scope, &mut config, cur_waygap);
+    }
+    return config.into();
+}
+
+fn process_line(
+    line: &[u8],
     scope: Scope,
-) {
-    let Some(newline_pos) = newline_pos_iter.next() else {
-        log::trace!("no more newlines");
-        return;
-    };
-
-    let line = trim_whitespace(&mmap[line_start..newline_pos]);
-
+    config: &mut Config,
+    cur_waygap: usize,
+) -> (Scope, usize) {
     if line.is_empty() || line.starts_with(b"//") {
-        log::trace!("skipping blank line");
-        return parse_config(
-            mmap,
-            newline_pos_iter,
-            newline_pos + 1,
-            gaps,
-            current_gap,
-            scope,
-        );
+        return (scope, cur_waygap);
     }
 
     match scope {
         Scope::Outer => {
             if memchr(b'{', line).is_some() {
-                log::trace!("outer -> inner");
-                let gap_name = utf8(before_first_whitespace(line));
+                let gap_name = arena_alloc_str(before_first_whitespace(line));
                 let gap_config = GapConfig::default();
-                gaps.push((gap_name, gap_config));
-                return parse_config(
-                    mmap,
-                    newline_pos_iter,
-                    newline_pos + 1,
-                    gaps,
-                    current_gap,
-                    Scope::Inner,
-                );
+                config.push((gap_name, gap_config));
+                return (Scope::Inner, cur_waygap);
             }
         }
         Scope::Inner => {
             if line == b"}" {
-                log::trace!("inner -> outer");
-                return parse_config(
-                    mmap,
-                    newline_pos_iter,
-                    newline_pos + 1,
-                    gaps,
-                    current_gap + 1,
-                    Scope::Outer,
-                );
+                return (Scope::Outer, cur_waygap + 1);
             }
             match before_first_whitespace(line) {
                 b"output" => {
-                    gaps[current_gap].1.output =
-                        Some(trim_quotes(line));
+                    config[cur_waygap].1.output =
+                        Some(arena_alloc_str(trim_quotes(line)));
                 }
                 b"anchor" => {
-                    gaps[current_gap].1.anchor = parse_anchor(trim_quotes(line))
+                    config[cur_waygap].1.anchor =
+                        parse_anchor(trim_quotes(line))
                 }
                 b"size" => {
-                    gaps[current_gap].1.size = u32::from_radix_10_checked(
-                        after_last_whitespace(line),
+                    config[cur_waygap].1.size = parse_or(
+                        u32::from_radix_10_checked(after_last_whitespace(line))
+                            .0,
+                        "size",
+                        config[cur_waygap].0,
+                        default_size,
                     )
-                    .0
-                    .unwrap_or_else(|| {
-                        log::warn!(
-                            "could not parse size for {}, defaulting to {}",
-                            gaps[current_gap].0,
-                            default_size()
-                        );
-                        default_size()
-                    })
                 }
-                b"margin" => gaps[current_gap].1.margin = atoi::atoi(
-                    after_last_whitespace(line),
-                )
-                .unwrap_or_else(|| {
-                    log::warn!(
-                        "could not parse margin for {}, defaulting to {}",
-                        gaps[current_gap].0,
-                        default_margin()
-                    );
-                    default_margin()
-                }),
-                b"activation-force" => {
-                    gaps[current_gap].1.activation_force = u16::from_radix_10_checked(
-                        after_last_whitespace(line),
+                b"margin" => {
+                    config[cur_waygap].1.margin = parse_or(
+                        atoi::atoi(after_last_whitespace(line)),
+                        "margin",
+                        config[cur_waygap].0,
+                        default_margin,
                     )
-                    .0
-                    .unwrap_or_else(|| {
-                        log::warn!(
-                            "could not parse activation force for {}, defaulting to {}",
-                            gaps[current_gap].0,
-                            default_activation_force()
-                        );
-                        default_activation_force()
-                    })
+                }
+                b"activation-force" => {
+                    config[cur_waygap].1.activation_force = parse_or(
+                        u16::from_radix_10_checked(after_last_whitespace(line))
+                            .0,
+                        "activation-force",
+                        config[cur_waygap].0,
+                        default_activation_force,
+                    )
                 }
                 b"ignore-exclusive-zone" => {
-                    let ignore_exclusive_zone = match after_last_whitespace(line) {
+                    let ignore_exclusive_zone = match after_last_whitespace(
+                        line,
+                    ) {
                         b"true" => true,
                         b"false" => false,
                         _ => {
                             log::warn!(
-                                "could not parse ignore exclusive zone for {}, defaulting to {}",
-                                gaps[current_gap].0,
+                                "could not parse ignore-exclusive-zone for {}, defaulting to {}",
+                                config[cur_waygap].0.as_str(),
                                 default_ignore_exclusive_zone()
                             );
                             default_ignore_exclusive_zone()
                         }
                     };
 
-                    gaps[current_gap].1.ignore_exclusive_zone = ignore_exclusive_zone;
+                    config[cur_waygap].1.ignore_exclusive_zone =
+                        ignore_exclusive_zone;
                 }
                 b"layer" => {
-                    gaps[current_gap].1.layer = parse_layer(trim_quotes(line));
+                    config[cur_waygap].1.layer =
+                        parse_layer(trim_quotes(line));
                 }
                 b"preview-color" => {
-                    gaps[current_gap].1.preview_color = parse_preview_color(trim_quotes(line));
+                    config[cur_waygap].1.preview_color =
+                        parse_preview_color(trim_quotes(line));
                 }
                 b"commands" => {
-                    log::trace!("inner -> command");
-                    return parse_config(
-                        mmap,
-                        newline_pos_iter,
-                        newline_pos + 1,
-                        gaps,
-                        current_gap,
-                        Scope::Command,
-                    );
+                    return (Scope::Command, cur_waygap);
                 }
                 unknown => {
-                    log::warn!("unknown key {}, ignoring", utf8(unknown));
+                    log::warn!(
+                        "unknown key {}, ignoring",
+                        utf8_unsafe(unknown)
+                    );
                 }
             }
-            return parse_config(
-                mmap,
-                newline_pos_iter,
-                newline_pos + 1,
-                gaps,
-                current_gap,
-                scope,
-            );
         }
         Scope::Command => {
             if line == b"}" {
-                log::trace!("command -> inner");
-                return parse_config(
-                    mmap,
-                    newline_pos_iter,
-                    newline_pos + 1,
-                    gaps,
-                    current_gap,
-                    Scope::Inner,
-                );
+                return (Scope::Inner, cur_waygap);
             }
             let input = parse_command_input(before_first_whitespace(line));
-            let command = trim_quotes_to_cstr(line);
-            gaps[current_gap].1.commands.push((input, command));
-            return parse_config(
-                mmap,
-                newline_pos_iter,
-                newline_pos + 1,
-                gaps,
-                current_gap,
-                scope,
-            );
+            let command = arena_alloc_str(trim_quotes(line));
+            config[cur_waygap].1.commands.push((input, command));
         }
+    }
+
+    return (scope, cur_waygap);
+}
+
+#[inline]
+fn arena_alloc_str(inner: &[u8]) -> ArenaStr {
+    unsafe {
+        let offset =
+            core::ptr::read_volatile(core::ptr::addr_of!(ARENA_OFFSET));
+        let len = inner.len() + 1;
+
+        if offset + len > 4096 {
+            origin::program::exit(1);
+        }
+
+        let arena_ptr = core::ptr::addr_of_mut!(STRING_ARENA) as *mut u8;
+        let dest = arena_ptr.add(offset);
+
+        core::ptr::copy_nonoverlapping(inner.as_ptr(), dest, inner.len());
+        dest.add(inner.len()).write(0); // null terminate
+
+        core::ptr::write_volatile(
+            core::ptr::addr_of_mut!(ARENA_OFFSET),
+            offset + len,
+        );
+
+        ArenaStr(offset as u16)
     }
 }
 
 #[inline]
 fn parse_command_input(key: &[u8]) -> InputEvent {
+    use InputEvent::*;
+
     match key {
-        b"enter" => InputEvent::Enter,
-        b"leave" => InputEvent::Leave,
-        b"edge" => InputEvent::Edge,
-        b"scroll-up" => InputEvent::Scroll(Scroll::Up),
-        b"scroll-down" => InputEvent::Scroll(Scroll::Down),
-        b"scroll-left" => InputEvent::Scroll(Scroll::Left),
-        b"scroll-right" => InputEvent::Scroll(Scroll::Right),
-        b"mouse-left" => InputEvent::Button(272),
-        b"mouse-right" => InputEvent::Button(273),
-        b"mouse-middle" => InputEvent::Button(274),
+        b"enter" => Enter,
+        b"leave" => Leave,
+        b"edge" => Edge,
+        b"scroll-up" => Scroll(ScrollDir::Up),
+        b"scroll-down" => Scroll(ScrollDir::Down),
+        b"scroll-left" => Scroll(ScrollDir::Left),
+        b"scroll-right" => Scroll(ScrollDir::Right),
+        b"mouse-left" => Button(272),
+        b"mouse-right" => Button(273),
+        b"mouse-middle" => Button(274),
 
         _ if key.starts_with(b"mouse-") => {
             let num = &key[6..];
             let id = atoi::atoi(num).unwrap_or_else(|| {
                 log::error!(
                     "invalid button id: '{}' in command '{}'",
-                    utf8(key),
-                    utf8(num)
+                    utf8_unsafe(key),
+                    utf8_unsafe(num)
                 );
                 origin::program::exit(1);
             });
@@ -539,14 +520,14 @@ fn parse_command_input(key: &[u8]) -> InputEvent {
         }
 
         _ => {
-            log::error!("unknown input event: {}", utf8(key));
+            log::error!("unknown input event: {}", utf8_unsafe(key));
             origin::program::exit(1);
         }
     }
 }
 
 #[inline]
-fn utf8(data: &[u8]) -> &str {
+fn utf8_unsafe(data: &[u8]) -> &str {
     unsafe { core::str::from_utf8_unchecked(data) }
 }
 
@@ -560,51 +541,22 @@ fn trim_whitespace(s: &[u8]) -> &[u8] {
         .iter()
         .rposition(|b| !b.is_ascii_whitespace())
         .map_or(start, |x| x + 1);
-    let retval = &s[start..end];
-    log::trace!("trim: `{}` -> `{}`", utf8(s), utf8(retval));
-    retval
+    &s[start..end]
 }
 
 #[inline]
 fn trim_quotes(s: &[u8]) -> &[u8] {
     let start = memchr(b'"', s).unwrap_or(0);
     let end = memrchr(b'"', s).unwrap_or(s.len());
-    let retval = &s[start + 1..end];
-    log::trace!("trim_quotes: `{}` -> `{}`", utf8(s), utf8(retval));
-    retval
-}
-
-#[inline]
-fn trim_quotes_to_cstr(s: &[u8]) -> &CStr {
-    let start = memchr(b'"', s).unwrap_or(0);
-    let end = memrchr(b'"', s).unwrap_or(s.len() - 1);
-
-    let inner = &s[start + 1..end];
-
-    let mut buf = SmallVec::<[u8; 256]>::with_capacity(inner.len() + 1);
-    buf.extend_from_slice(inner);
-    buf.push(0);
-
-    // TODO: I hate this
-    let leaked: &'static [u8] = alloc::boxed::Box::leak(buf.into_boxed_slice());
-
-    let retval = unsafe { CStr::from_bytes_with_nul_unchecked(leaked) };
-    log::trace!("trim_quotes_to_cstr: `{}` -> `{:?}`", utf8(s), retval);
-    retval
+    &s[start + 1..end]
 }
 
 #[inline]
 fn before_first_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memchr2(b' ', b'\t', s) {
-        let retval = &s[0..n];
-        log::trace!(
-            "before_first_whitespace: `{}` -> `{}`",
-            utf8(s),
-            utf8(retval)
-        );
-        retval
+        &s[0..n]
     } else {
-        log::trace!("failed to find in before_first_whitespace");
+        log::warn!("failed to find in before_first_whitespace");
         s
     }
 }
@@ -612,15 +564,9 @@ fn before_first_whitespace(s: &[u8]) -> &[u8] {
 #[inline]
 fn after_last_whitespace(s: &[u8]) -> &[u8] {
     if let Some(n) = memrchr2(b' ', b'\t', s) {
-        let retval = &s[n + 1..];
-        log::trace!(
-            "after_last_whitespace: `{}` -> `{}`",
-            utf8(s),
-            utf8(retval)
-        );
-        retval
+        &s[n + 1..]
     } else {
-        log::trace!("failed to find in after_last_whitespace");
+        log::warn!("failed to find in after_last_whitespace");
         s
     }
 }
@@ -639,7 +585,7 @@ fn parse_anchor(s: &[u8]) -> Anchor {
         other => {
             log::warn!(
                 "{} is not a valid anchor, defaulting to {}",
-                utf8(other),
+                utf8_unsafe(other),
                 default_anchor()
             );
             default_anchor()
@@ -657,7 +603,7 @@ fn parse_layer(s: &[u8]) -> Layer {
         other => {
             log::warn!(
                 "{} is not a valid layer, defaulting to {}",
-                utf8(other),
+                utf8_unsafe(other),
                 default_layer()
             );
             default_layer()
@@ -689,7 +635,7 @@ fn parse_preview_color(s: &[u8]) -> Color {
         _ => {
             log::warn!(
                 "{} is not a valid debug color, defaulting to {}",
-                utf8(s),
+                utf8_unsafe(s),
                 default_preview_color()
             );
             let c = default_preview_color();
@@ -698,4 +644,23 @@ fn parse_preview_color(s: &[u8]) -> Color {
     };
 
     Color { r, g, b, a }
+}
+
+#[inline]
+fn parse_or<T: Copy + core::fmt::Display>(
+    value: Option<T>,
+    name: &str,
+    gap: ArenaStr,
+    default: fn() -> T,
+) -> T {
+    value.unwrap_or_else(|| {
+        let d = default();
+        log::warn!(
+            "could not parse {} for {}, defaulting to {}",
+            name,
+            gap.as_str(),
+            d
+        );
+        d
+    })
 }

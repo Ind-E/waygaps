@@ -6,9 +6,9 @@ use crate::wayland;
 #[derive(Clone, Copy)]
 pub enum Axis {
     Vertical,
-    #[allow(unused)]
     // incorecctly marked as unused because it's
     // only created by transmute
+    #[allow(unused)]
     Horizontal,
 }
 

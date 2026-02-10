@@ -1,6 +1,4 @@
-use core::ffi::CStr;
-
-use rustix::{self, fd::OwnedFd};
+use rustix;
 use waybackend::{
     Waybackend, objman::ObjectManager, shm::MmappedSlice, types::ObjectId,
 };
@@ -8,14 +6,14 @@ use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
 
 use crate::{
     BUFFER_SCALE,
-    config::{Anchor, Color, GapConfig, InputEvent},
+    config::{Anchor, ArenaStr, GapConfig, InputEvent},
     wayland,
 };
 
 const NAMESPACE: &str = "waygaps";
 
 pub struct WayGap {
-    pub commands: &'static [(InputEvent, &'static CStr)],
+    pub commands: &'static [(InputEvent, ArenaStr)],
 
     pub registry_name: u32,
     pub wl_surface: ObjectId,
@@ -28,7 +26,7 @@ pub struct WayGap {
 
     bufsize: u32,
 
-    shm: OwnedFd,
+    shm: rustix::fd::OwnedFd,
 
     pub configured: bool,
     pub redraw: bool,
@@ -253,7 +251,7 @@ impl WayGap {
 }
 
 #[inline]
-pub fn bg(
+fn bg(
     canvas: &mut [u32],
     x1: u32,
     y1: u32,
@@ -281,10 +279,47 @@ pub fn bg(
     }
 }
 
+#[repr(C, align(4))]
+/// Color representation in BGRA in native endian.
+/// Can be safely transmuted into a u32.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub b: u8,
+    pub g: u8,
+    pub r: u8,
+    pub a: u8,
+}
+
+impl Color {
+    #[inline]
+    pub const fn new(a: u8, r: u8, g: u8, b: u8) -> Self {
+        Self { b, r, g, a }
+    }
+
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        // SAFETY: this is safe because Color has the same size and alignment as
+        // a u32
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
+impl core::fmt::Display for Color {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{:02}{:02}{:02}{:02}",
+            self.r as u32 >> 24 & 0xFF,
+            self.g as u32 >> 16 & 0xFF,
+            self.b as u32 >> 8 & 0xFF,
+            self.a as u32 & 0xFF,
+        )
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum WaylandObject {
-    // standard stuff
     Display,
     Registry,
     Callback,

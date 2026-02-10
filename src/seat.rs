@@ -33,9 +33,7 @@ pub struct Pointer {
 
     pub button: u16,
     pub enter_serial: u32,
-    /// represents high-resolution wheel scroll information, with each multiple
-    /// of 120 representing one logical scroll step (a wheel detent).
-    pub value120: i32,
+    pub scroll: f64,
     pub axis: Axis,
 
     pub current_waygap: u32,
@@ -55,8 +53,9 @@ impl Pointer {
 
             button: 0,
             enter_serial: 0,
-            value120: 0,
+            scroll: 0.0,
             axis: Axis::Vertical,
+
             current_waygap: u32::MAX,
         }
     }

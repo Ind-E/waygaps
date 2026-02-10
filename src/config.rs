@@ -1,14 +1,17 @@
 use alloc::boxed::Box;
+use alloc::collections::btree_map::BTreeMap;
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{self};
 use serde::Deserialize;
 
 use crate::gap::Color;
+use crate::log;
 use crate::seat::Axis;
 use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
-use crate::{Config, log};
+
+pub type Config = BTreeMap<Box<str>, GapConfig>;
 
 #[derive(PartialEq, Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "Box<str>")]
@@ -43,7 +46,7 @@ impl TryFrom<Box<str>> for InputEvent {
 
             _ if key.starts_with("mouse-") => {
                 let num = &key[6..];
-                let id = match u16::from_str_radix(num, 10) {
+                let id = match num.parse::<u16>() {
                     Ok(id) => id,
                     Err(e) => {
                         return Err(alloc::format!(
@@ -54,11 +57,9 @@ impl TryFrom<Box<str>> for InputEvent {
                 Ok(InputEvent::Button(id))
             }
 
-            _ => {
-                return Err(alloc::format!(
-                    "unknown input event: `{key}`, expected one of `enter`, `leave`, `edge`, `scroll-up`, `scroll-down`, `scroll-left`, `scroll-right`, `mouse-left`, `mouse-right`, or `mouse-middle`"
-                ));
-            }
+            _ => Err(alloc::format!(
+                "unknown input event: `{key}`, expected one of `enter`, `leave`, `edge`, `scroll-up`, `scroll-down`, `scroll-left`, `scroll-right`, `mouse-left`, `mouse-right`, or `mouse-middle`"
+            )),
         }
     }
 }

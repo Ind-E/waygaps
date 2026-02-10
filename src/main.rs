@@ -4,7 +4,6 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::{
     mem::MaybeUninit,
     sync::atomic::{self, AtomicBool},
@@ -23,7 +22,7 @@ use waybackend::{
 };
 
 use crate::{
-    config::{Anchor, GapConfig, InputEvent, read_config},
+    config::{Anchor, Config, GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
     utils::{is_output_match, parse_args},
@@ -289,8 +288,6 @@ struct PendingOutput {
     name: &'static str,
     description: &'static str,
 }
-
-pub type Config = BTreeMap<Box<str>, GapConfig>;
 
 struct App {
     backend: waybackend::Waybackend,
@@ -1035,12 +1032,21 @@ impl wayland::wl_pointer::EvHandler for App {
     /// scroll distance.
     fn axis(
         &mut self,
-        _sender_id: ObjectId,
+        sender_id: ObjectId,
         _time: u32,
-        _axis: wayland::wl_pointer::Axis,
-        _value: WlFixed,
+        axis: wayland::wl_pointer::Axis,
+        value: WlFixed,
     ) {
-        // NoOp
+        let ptr = match get_pointer(&mut self.seats, sender_id) {
+            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
+                Some(_waygap) => ptr,
+                None => return,
+            },
+            None => return,
+        };
+
+        ptr.axis = axis.into();
+        ptr.scroll += f64::from(value);
     }
 
     /// end of a pointer event sequence
@@ -1097,8 +1103,8 @@ impl wayland::wl_pointer::EvHandler for App {
         }
         ptr.button = 0;
 
-        if ptr.value120 <= -120 {
-            ptr.value120 += 120;
+        if ptr.scroll <= -15.0 {
+            ptr.scroll += 15.0;
             for event in waygap.commands.iter() {
                 if let (InputEvent::Scroll(scroll), cmd) = event
                     && scroll.on_axis(ptr.axis)
@@ -1107,8 +1113,8 @@ impl wayland::wl_pointer::EvHandler for App {
                     shell_command(cmd);
                 }
             }
-        } else if ptr.value120 >= 120 {
-            ptr.value120 -= 120;
+        } else if ptr.scroll >= 15.0 {
+            ptr.scroll -= 15.0;
             for event in waygap.commands.iter() {
                 if let (InputEvent::Scroll(scroll), cmd) = event
                     && scroll.on_axis(ptr.axis)
@@ -1224,24 +1230,10 @@ impl wayland::wl_pointer::EvHandler for App {
     /// not guaranteed.
     fn axis_discrete(
         &mut self,
-        sender_id: ObjectId,
-        axis: wayland::wl_pointer::Axis,
-        discrete: i32,
+        _sender_id: ObjectId,
+        _axis: wayland::wl_pointer::Axis,
+        _discrete: i32,
     ) {
-        let ptr = match get_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(_waygap) => ptr,
-                None => return,
-            },
-            None => return,
-        };
-
-        ptr.axis = axis.into();
-        match discrete {
-            ..0 => ptr.value120 = -120,
-            1.. => ptr.value120 = 120,
-            0 => {}
-        }
     }
 
     /// axis high-resolution scroll event
@@ -1269,20 +1261,10 @@ impl wayland::wl_pointer::EvHandler for App {
     /// not guaranteed.
     fn axis_value120(
         &mut self,
-        sender_id: ObjectId,
-        axis: wayland::wl_pointer::Axis,
-        value120: i32,
+        _sender_id: ObjectId,
+        _axis: wayland::wl_pointer::Axis,
+        _value120: i32,
     ) {
-        let ptr = match get_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(_waygap) => ptr,
-                None => return,
-            },
-            None => return,
-        };
-
-        ptr.value120 += value120;
-        ptr.axis = axis.into();
     }
 
     /// axis relative physical direction event

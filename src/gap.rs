@@ -1,6 +1,5 @@
 use alloc::boxed::Box;
 
-use rustix;
 use serde::Deserialize;
 use waybackend::{
     Waybackend, objman::ObjectManager, shm::MmappedSlice, types::ObjectId,

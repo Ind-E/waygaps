@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(cstr_display)]
 
 extern crate alloc;
 
@@ -134,8 +135,8 @@ pub extern "C" fn origin_main(
     let registry = objman.create(WaylandObject::Registry);
     let callback = objman.create(WaylandObject::Callback);
 
-    let mut outputs = SmallVec::<[(u32, u32); 4]>::new();
-    let mut seats = SmallVec::<[(u32, u32); 4]>::new();
+    let mut outputs = SmallVec::<[(u32, u32); 2]>::new();
+    let mut seats = SmallVec::<[(u32, u32); 2]>::new();
     waybackend::roundtrip(
         &mut backend,
         &mut receiver,

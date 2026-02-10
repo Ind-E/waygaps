@@ -237,11 +237,11 @@ impl core::fmt::Display for zwlr_layer_shell_v1::Layer {
 fn open_file(path: &CStr) -> OwnedFd {
     match fs::open(path, OFlags::RDONLY, Mode::empty()) {
         Ok(fd) => {
-            log::info!("opening config file: {path:?}",);
+            log::info!("opening config file: `{}`", path.display());
             fd
         }
         Err(e) => {
-            log::error!("error opening config file at {path:?}: {e}");
+            log::error!("error opening config file at `{}`: {e}", path.display());
             origin::program::exit(1);
         }
     }

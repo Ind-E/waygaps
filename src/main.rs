@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::{
     mem::MaybeUninit,
     sync::atomic::{self, AtomicBool},
@@ -22,7 +23,7 @@ use waybackend::{
 };
 
 use crate::{
-    config::{Anchor, ArenaStr, GapConfig, InputEvent, read_config},
+    config::{Anchor, GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
     seat::{Pointer, Seat},
     utils::{is_output_match, parse_args},
@@ -289,7 +290,7 @@ struct PendingOutput {
     description: &'static str,
 }
 
-pub type Config = alloc::vec::Vec<(ArenaStr, GapConfig)>;
+pub type Config = BTreeMap<Box<str>, GapConfig>;
 
 struct App {
     backend: waybackend::Waybackend,
@@ -786,10 +787,10 @@ impl wayland::wl_output::EvHandler for App {
         let output = self.pending_outputs.swap_remove(index);
 
         for (cfg_name, cfg) in &self.config {
-            if is_output_match(cfg.output, output.name, output.description) {
+            if is_output_match(cfg.output.as_deref(), output.description) {
                 log::info!(
                     "opening config `{}` on output `{}`",
-                    cfg_name.as_str(),
+                    cfg_name,
                     output.name
                 );
                 create_waygap(
@@ -933,7 +934,7 @@ impl wayland::wl_pointer::EvHandler for App {
                 {
                     for event in waygap.commands.iter() {
                         if let (InputEvent::Enter, cmd) = event {
-                            shell_command(*cmd);
+                            shell_command(cmd);
                             break;
                         }
                     }
@@ -958,7 +959,7 @@ impl wayland::wl_pointer::EvHandler for App {
             {
                 for event in waygap.commands.iter() {
                     if let (InputEvent::Leave, cmd) = event {
-                        shell_command(*cmd);
+                        shell_command(cmd);
                         break;
                     }
                 }
@@ -1091,7 +1092,7 @@ impl wayland::wl_pointer::EvHandler for App {
             if let (InputEvent::Button(btn), cmd) = event
                 && *btn == ptr.button
             {
-                shell_command(*cmd);
+                shell_command(cmd);
             }
         }
         ptr.button = 0;
@@ -1103,7 +1104,7 @@ impl wayland::wl_pointer::EvHandler for App {
                     && scroll.on_axis(ptr.axis)
                     && !scroll.is_positive()
                 {
-                    shell_command(*cmd);
+                    shell_command(cmd);
                 }
             }
         } else if ptr.value120 >= 120 {
@@ -1113,7 +1114,7 @@ impl wayland::wl_pointer::EvHandler for App {
                     && scroll.on_axis(ptr.axis)
                     && scroll.is_positive()
                 {
-                    shell_command(*cmd);
+                    shell_command(cmd);
                 }
             }
         }
@@ -1121,7 +1122,7 @@ impl wayland::wl_pointer::EvHandler for App {
         if ptr.should_trigger_edge {
             for event in waygap.commands.iter() {
                 if let (InputEvent::Edge, cmd) = event {
-                    shell_command(*cmd);
+                    shell_command(cmd);
                     break;
                 }
             }
@@ -1616,7 +1617,7 @@ fn setup_signals() {
 }
 
 #[inline(never)]
-fn shell_command(command: ArenaStr) {
+fn shell_command(command: &core::ffi::CStr) {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => unsafe {
             let args: [*const u8; 5] = [

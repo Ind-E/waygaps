@@ -1,0 +1,48 @@
+[hot-corner-1]
+# use "top-right", "top-left", "bottom-right", or "bottom-left" for corners
+# use "top", "bottom", "left", or "right" for edges
+anchor = "top-left"
+
+# for corners, affects width and height
+# for edges, affects thickness
+size = 10
+
+# searches for any outputs that contain this in their description
+# defaults to all outputs if not included
+# output "eDP-1"
+
+# only affects edges
+# useful to avoid edges and corners overlapping
+margin = 0
+
+# affects how much you have to move the mouse beyond the edge of the
+# screen to trigger the 'edge' action (see below)
+activation-force = 25
+
+# list of actions and corresponding command to run (in a bash shell)
+commands = [
+  ["enter", "notify-send enter"],
+  ["leave", "notify-send leave"],
+
+  # triggers when pointer is pushed up against the screen edge/corner
+  # configure `activation-force` above to make easier/harder to trigger
+  ["edge", "notify-send edge"],
+
+  ["scroll-up", "notify-send up"],
+  ["scroll-down", "notify-send down"],
+  ["scroll-left", "notify-send left"],
+  ["scroll-right", "notify-send right"],
+
+  ["mouse-left", "notify-send 'left click'"],
+  ["mouse-right", "notify-send 'right click'"],
+  ["mouse-middle", "notify-send 'middle click'"],
+
+  # for extra mouse buttons, use their input event codes
+  ["mouse-274", "notify-send 'back button'"],
+]
+
+
+[hot-corner-2]
+anchor = "right"
+size = 10
+commands = [["edge", "notify-send 'edge 2'"]]

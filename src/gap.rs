@@ -1,4 +1,7 @@
+use alloc::boxed::Box;
+
 use rustix;
+use serde::Deserialize;
 use waybackend::{
     Waybackend, objman::ObjectManager, shm::MmappedSlice, types::ObjectId,
 };
@@ -6,14 +9,14 @@ use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
 
 use crate::{
     BUFFER_SCALE,
-    config::{Anchor, ArenaStr, GapConfig, InputEvent},
+    config::{Anchor, GapConfig, InputEvent},
     wayland,
 };
 
 const NAMESPACE: &str = "waygaps";
 
 pub struct WayGap {
-    pub commands: &'static [(InputEvent, ArenaStr)],
+    pub commands: &'static [(InputEvent, Box<core::ffi::CStr>)],
 
     pub registry_name: u32,
     pub wl_surface: ObjectId,
@@ -282,7 +285,7 @@ fn bg(
 #[repr(C, align(4))]
 /// Color representation in BGRA in native endian.
 /// Can be safely transmuted into a u32.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Color {
     pub b: u8,
     pub g: u8,

@@ -31,11 +31,12 @@ git clone git@github.com:Ind-E/waygaps.git
 cd waygaps
 cargo install --path . --locked
 ```
-If that doesn't work, open an issue.
+This might not work because of some of the bespoke (unstable) configuration options employed.
+In that case, open an issue.
 
 
 ## Quickstart
-Copy the [example config](./example-config.kdl) to `~/.config/waygaps/config.kdl`.
+Copy the [example config](./example-config.toml) to `~/.config/waygaps/config.kdl`.
 Run `waygaps -p` while configuring to preview where the hot corners are, then setup a way
 to run `waygaps` at startup.
 
@@ -43,91 +44,81 @@ See below for more details
 
 
 ## Configuration
-```kdl
-// name of the hot corner - can be anything
-hot-corner-1 {
+```toml
+# name of the hot corner - can be anything
+[hot-corner-1]
 
-  // use "top-right", "top-left", "bottom-right", or "bottom-left" for corners
-  // use "top", "bottom", "left", or "right" for edges
-  // default: "top-left"
-  anchor "top-right"
+# use "top-right", "top-left", "bottom-right", or "bottom-left" for corners
+# use "top", "bottom", "left", or "right" for edges
+# default: "top-left"
+anchor = "top-right"
 
-  // for corners, affects width and height
-  // for edges, affects length from edge of screen
-  // default: 10
-  size 50
+# for corners, affects width and height
+# for edges, affects length from edge of screen
+# default: 10
+size = 50
 
-  // searches for any outputs that contain this in their name or description
-  // you can use a tool like wlr-randr to check names/descriptions
-  // defaults to all outputs if not included
-  output "eDP-1"
+# searches for any outputs that contain this in their name or description
+# you can use a tool like wlr-randr to check names/descriptions
+# defaults to all outputs if not included
+output = "eDP-1"
 
-  // only affects edges
-  // useful to avoid overlapping edges and corners
-  // default: 0
-  margin 10
+# only affects edges
+# useful to avoid overlapping edges and corners
+# default: 0
+margin = 10
 
-  // affects how much you have to move the mouse beyond the edge of the
-  // screen to trigger the 'edge' action (see below)
-  // default: 25
-  activation-force 20
+# affects how much you have to move the mouse beyond the edge of the
+# screen to trigger the 'edge' action (see below)
+# default: 25
+activation-force = 20
 
-  // which layer to draw the region on
-  // default: overlay
-  layer "top"
+# which layer to draw the region on
+# default: overlay
+layer = "top"
 
-  // whether or not to ignore the exclusive zone of other layer shell surfaces
-  // default: true
-  ignore-exclusive-zone false
+# whether or not to ignore the exclusive zone of other layer shell surfaces
+# default: true
+ignore-exclusive-zone = false
 
-  // color used to preview regions when the -p flag is passed
-  // can be RRGGBB or RRGGBBAA
-  // default: "80101019"
-  preview-color "FFFFFF"
+# color used to preview regions when the -p flag is passed
+# can be RRGGBB or RRGGBBAA
+# default: "80101019"
+preview-color = "FFFFFF"
 
-  // list of actions and corresponding command to run (in a bash shell)
-  commands {
-    // triggers when pointer enters the region
-    enter "notify-send enter"
+# list of actions and corresponding command to run (in a bash shell)
+commands = [
+  # triggers when pointer enters the region
+  ["enter", "notify-send enter"],
 
-    // triggers when pointer leaves the region
-    leave "notify-send leave"
+  # triggers when pointer leaves the region
+  ["leave", "notify-send leave"],
 
-    // triggers when pointer is pushed up against the screen edge/corner
-    // configure `activation-force` above to make easier/harder to trigger
-    edge "notify-send edge"
+  # triggers when pointer is pushed up against the screen edge/corner
+  # configure `activation-force` above to make easier/harder to trigger
+  ["edge", "notify-send edge"],
 
-    // scroll triggers
-    scroll-up "notify-send up"
-    scroll-down "notify-send down"
-    scroll-left "notify-send left"
-    scroll-right "notify-send right"
+  # scroll triggers
+  ["scroll-up", "notify-send up"],
+  ["scroll-down", "notify-send down"],
+  ["scroll-left", "notify-send left"],
+  ["scroll-right", "notify-send right"],
 
-    // mouse button triggers
-    mouse-left "notify-send 'left click'"
-    mouse-right "notify-send 'right click'"
-    mouse-middle "notify-send 'middle click'"
+  # mouse button triggers
+  ["mouse-left", "notify-send 'left click'"],
+  ["mouse-right", "notify-send 'right click'"],
+  ["mouse-middle", "notify-send 'middle click'"],
 
-    // for other mouse buttons, use their input event codes
-    // you can use a tool like wev to find them
-    mouse-274 "notify-send 'back button'"
-  }
+  # for other mouse buttons, use their input event codes
+  # you can use a tool like wev to find them
+  ["mouse-274", "notify-send 'back button'"],
+]
 
-}
-
-// add as many hot corners as you want
-hot-corner-2 {
-  // etc
-}
+# add as many hot corners as you want
+[hot-corner-2]
+# etc
 ```
 [wev](https://github.com/jwrdegoede/wev) [wlr-randr](https://gitlab.freedesktop.org/emersion/wlr-randr)
-
-**Important Note**: even though the config file looks like kdl, waygaps uses
-its own minimal parser. This means that your config file has to have almost
-exactly the same format as the example:
-- inline comments are not supported (ex: `size 10 // no comments here`)
-- there can be no more than one `{` or `}` on a line
-    - title and `{` must appear on the same line
 
 
 ## Features
@@ -150,15 +141,14 @@ exactly the same format as the example:
 ## Performance
 As part of creating waygaps, I challenged myself to make something extremely fast
 and lightweight, even if it came at the cost of usability. This does come with some
-downsides - it's not very portable, the config file parser is a bit brittle, and there's
-no way to enable extra logging in release builds.
+downsides - it's not very portable and there's no way to enable extra logging in release builds.
 
-I think it was worth it, though - On my laptop, waygaps uses less than 500 Kb of memory,
-and averages 0.1% cpu usage.
+I think it was worth it, though - On my laptop, waygaps uses about 500 Kb of memory,
+and idles at 0.0% cpu usage.
 ```sh
 ❯ ps -C waygaps -o cmd,pcpu,rss,pss,sz,vsize
 CMD        %CPU   RSS   PSS    SZ    VSZ
-waygaps     0.1   440   213   394   1576
+waygaps     0.0   536   309   168    672
 ```
 
 

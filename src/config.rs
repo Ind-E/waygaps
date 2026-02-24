@@ -126,6 +126,7 @@ impl From<Layer> for wlrLayer {
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
+#[serde(rename_all = "kebab-case")]
 pub struct GapConfig {
     pub output: Option<Box<str>>,
     pub anchor: Anchor,

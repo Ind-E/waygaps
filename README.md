@@ -81,10 +81,8 @@ layer = "top"
 # default: true
 ignore-exclusive-zone = false
 
-# color used to preview regions when the -p flag is passed
-# can be RRGGBB or RRGGBBAA
-# default: "80101019"
-preview-color = "FFFFFF"
+# color used to preview this region when the -p flag is passed
+preview-color = { r = 128, g = 16, b = 16, a = 25 }
 
 # list of actions and corresponding command to run (in a bash shell)
 commands = [

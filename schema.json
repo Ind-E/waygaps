@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "additionalProperties": {
+    "$ref": "#/$defs/GapConfig"
+  },
+  "$defs": {
+    "Anchor": {
+      "type": "string",
+      "enum": [
+        "top-left",
+        "top-right",
+        "bottom-right",
+        "bottom-left",
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ]
+    },
+    "Color": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "b": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "g": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "r": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "b",
+        "g",
+        "r",
+        "a"
+      ]
+    },
+    "GapConfig": {
+      "type": "object",
+      "properties": {
+        "activation-force": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 25,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "anchor": {
+          "$ref": "#/$defs/Anchor"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/InputEvent"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "ignore-exclusive-zone": {
+          "type": "boolean",
+          "default": true
+        },
+        "layer": {
+          "$ref": "#/$defs/Layer"
+        },
+        "margin": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "output": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "preview-color": {
+          "$ref": "#/$defs/Color"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 10,
+          "minimum": 0
+        }
+      }
+    },
+    "InputEvent": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "enter",
+            "leave",
+            "edge",
+            "scroll-up",
+            "scroll-down",
+            "scroll-left",
+            "scroll-right",
+            "mouse-left",
+            "mouse-right",
+            "mouse-middle"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^mouse-\\d+$"
+        }
+      ]
+    },
+    "Layer": {
+      "type": "string",
+      "enum": [
+        "background",
+        "bottom",
+        "top",
+        "overlay"
+      ]
+    }
+  }
+}

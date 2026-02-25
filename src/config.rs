@@ -11,7 +11,23 @@ use crate::seat::Axis;
 use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
 
-pub type Config = BTreeMap<Box<str>, GapConfig>;
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+pub struct Config(pub BTreeMap<Box<str>, GapConfig>);
+
+impl core::ops::Deref for Config {
+    type Target = BTreeMap<Box<str>, GapConfig>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for Config {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 #[derive(PartialEq, Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "Box<str>")]
@@ -64,9 +80,47 @@ impl TryFrom<Box<str>> for InputEvent {
     }
 }
 
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for InputEvent {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
+        "InputEvent".into()
+    }
+
+    fn schema_id() -> alloc::borrow::Cow<'static, str> {
+        concat!(module_path!(), "InputEvent").into()
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "enter",
+                        "leave",
+                        "edge",
+                        "scroll-up",
+                        "scroll-down",
+                        "scroll-left",
+                        "scroll-right",
+                        "mouse-left",
+                        "mouse-right",
+                        "mouse-middle"
+                    ]
+                },
+                {
+                    "type": "string",
+                    "pattern": "^mouse-\\d+$"
+                }
+            ]
+        })
+    }
+}
+
 #[repr(u8)]
 #[derive(PartialEq, Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ScrollDir {
     Left,
     Right,
@@ -92,6 +146,7 @@ impl ScrollDir {
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[repr(u8)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Layer {
     Background,
     Bottom,
@@ -127,6 +182,7 @@ impl From<Layer> for wlrLayer {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GapConfig {
     pub output: Option<Box<str>>,
     pub anchor: Anchor,
@@ -136,6 +192,10 @@ pub struct GapConfig {
     pub ignore_exclusive_zone: bool,
     pub layer: Layer,
     pub preview_color: Color,
+
+    #[cfg(feature = "schema")]
+    pub commands: alloc::vec::Vec<(InputEvent, Box<str>)>,
+    #[cfg(not(feature = "schema"))]
     pub commands: alloc::vec::Vec<(InputEvent, Box<core::ffi::CStr>)>,
 }
 
@@ -192,6 +252,7 @@ const fn default_preview_color() -> Color {
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Anchor {
     TopLeft,
     TopRight,

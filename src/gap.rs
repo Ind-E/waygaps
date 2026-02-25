@@ -282,9 +282,10 @@ fn bg(
 }
 
 #[repr(C, align(4))]
-/// Color representation in BGRA in native endian.
-/// Can be safely transmuted into a u32.
+// Color representation in BGRA in native endian.
+// Can be safely transmuted into a u32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Color {
     pub b: u8,
     pub g: u8,

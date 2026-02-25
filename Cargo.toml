@@ -5,6 +5,9 @@ name = "waygaps"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+schema = ["dep:schemars", "dep:serde_json"]
+
 [dependencies]
 origin = { version = "0.26.2", default-features = false, features = [
     "origin-start",
@@ -30,6 +33,13 @@ toml = { version = "1.0.3", default-features = false, features = [
     "parse",
 ] }
 waybackend = { version = "0.10.0", default-features = false }
+
+schemars = { version = "1.2.1", default-features = false, features = [
+    "derive",
+], optional = true }
+serde_json = { version = "1.0.149", default-features = false, features = [
+    "alloc",
+], optional = true }
 
 [build-dependencies]
 waybackend-scanner = { version = "0.10.0", features = ["build-script"] }

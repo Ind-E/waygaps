@@ -10,9 +10,7 @@ use core::{
 };
 
 use rustix::{
-    self,
-    event::epoll,
-    process::{self},
+    self, event::epoll, process::{self}
 };
 use smallvec::SmallVec;
 use waybackend::{
@@ -113,6 +111,25 @@ pub extern "C" fn origin_main(
     argv: *const *const i8,
     envp: *const *const i8,
 ) -> core::ffi::c_int {
+    #[cfg(feature = "schema")]
+    {
+        use rustix::fs::{Mode, OFlags};
+        use schemars::schema_for;
+
+        let schema = schema_for!(Config);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+
+        const PATH: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/schema.json");
+
+        let fd = rustix::fs::open(
+            PATH,
+            OFlags::CREATE | OFlags::WRONLY | OFlags::TRUNC,
+            Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::ROTH,
+        )
+        .unwrap();
+        rustix::io::write(fd, json.as_bytes()).unwrap();
+        return 0;
+    }
     unsafe { environ = envp.cast() };
 
     #[cfg(not(debug_assertions))]
@@ -783,7 +800,7 @@ impl wayland::wl_output::EvHandler for App {
 
         let output = self.pending_outputs.swap_remove(index);
 
-        for (cfg_name, cfg) in &self.config {
+        for (cfg_name, cfg) in self.config.iter() {
             if is_output_match(cfg.output.as_deref(), output.description) {
                 log::info!(
                     "opening config `{}` on output `{}`",

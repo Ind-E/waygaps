@@ -45,6 +45,8 @@ See below for more details
 
 ## Configuration
 ```toml
+#:schema https://raw.githubusercontent.com/Ind-E/waygaps/refs/heads/main/schema.json
+
 # name of the hot corner - can be anything
 [hot-corner-1]
 

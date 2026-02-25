@@ -1,3 +1,5 @@
+#:schema https://raw.githubusercontent.com/Ind-E/waygaps/refs/heads/main/schema.json
+
 [hot-corner-1]
 # use "top-right", "top-left", "bottom-right", or "bottom-left" for corners
 # use "top", "bottom", "left", or "right" for edges

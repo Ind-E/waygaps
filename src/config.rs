@@ -246,7 +246,7 @@ const fn default_ignore_exclusive_zone() -> bool {
 
 #[inline]
 const fn default_layer() -> Layer {
-    Layer::Overlay
+    Layer::Top
 }
 
 #[inline]

@@ -10,9 +10,7 @@ use core::{
     sync::atomic::{self, AtomicBool},
 };
 
-use rustix::{
-    self, event::epoll, process::{self}
-};
+use rustix::{self, event::epoll};
 use smallvec::SmallVec;
 use waybackend::{
     Waybackend,
@@ -186,9 +184,6 @@ pub extern "C" fn origin_main(
 
     setup_signals();
 
-    let pid = process::getpid();
-    log::info!("pid: {}", pid);
-
     let mut app = App::new(backend, objman, config, args.preview);
 
     for (registry_name, version) in outputs {
@@ -256,14 +251,11 @@ pub extern "C" fn origin_main(
                     let mut msgs =
                         receiver.recv(&app.backend.wayland_fd).unwrap();
                     while let Some(sender_id) = msgs.next() {
-                        let sender_id = match sender_id {
-                            Ok(sender_id) => sender_id,
-                            Err(_) => {
-                                log::warn!(
-                                    "received a null object id from the server. This is a protocol violation!"
-                                );
-                                continue;
-                            }
+                        let Ok(sender_id) = sender_id else {
+                            log::warn!(
+                                "received a null object id from the server. This is a protocol violation!"
+                            );
+                            continue;
                         };
                         let sender = app.objman.get(sender_id).unwrap();
                         waybackend::match_enum_with_interface!(
@@ -424,9 +416,8 @@ impl wayland::wl_registry::EvHandler for App {
         interface: &str,
         version: u32,
     ) {
-        match interface {
-            wayland::wl_seat::NAME => self.create_seat(name, version),
-            _ => (),
+        if interface == wayland::wl_seat::NAME {
+            self.create_seat(name, version);
         }
     }
 
@@ -461,14 +452,14 @@ impl wayland::wl_seat::EvHandler for App {
         seat: ObjectId,
         capabilities: wayland::wl_seat::Capability,
     ) {
-        if let Some(seat) = self.seats.iter_mut().find(|s| s.wl_seat == seat) {
+        if let Some(seat) = self.seats.iter_mut().find(|s| s.id == seat) {
             if capabilities.contains(wayland::wl_seat::Capability::POINTER)
                 && seat.pointer.is_none()
             {
                 let ptr_id = self.objman.create(WaylandObject::Pointer);
                 wayland::wl_seat::req::get_pointer(
                     &mut self.backend,
-                    seat.wl_seat,
+                    seat.id,
                     ptr_id,
                 )
                 .unwrap();
@@ -500,11 +491,8 @@ impl wayland::wl_seat::EvHandler for App {
                 }
 
                 // we no longer have a pointer, release the previous object
-                wayland::wl_pointer::req::release(
-                    &mut self.backend,
-                    seat.wl_seat,
-                )
-                .unwrap();
+                wayland::wl_pointer::req::release(&mut self.backend, seat.id)
+                    .unwrap();
             }
         }
     }
@@ -644,50 +632,46 @@ impl wayland::wl_pointer::EvHandler for App {
         _surface_x: WlFixed,
         _surface_y: WlFixed,
     ) {
-        let current_waygap = 'brk: {
-            for (i, gap) in self.waygaps.iter().enumerate() {
-                if gap.wl_surface == surface {
-                    break 'brk i as u32;
-                }
-            }
+        let Some(current_waygap_idx) = self
+            .waygaps
+            .iter()
+            .position(|gap| gap.wl_surface == surface)
+            .map(|i| i as u16)
+        else {
             return;
         };
 
-        match get_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => {
-                ptr.enter_serial = serial;
-                ptr.current_waygap = current_waygap;
-
-                if let Some(waygap) =
-                    self.waygaps.get(ptr.current_waygap as usize)
-                {
-                    for event in waygap.commands.iter() {
-                        if let (InputEvent::Enter, cmd) = event {
-                            shell_command(cmd);
-                            break;
-                        }
-                    }
-                }
-
-                ptr
-            }
-            None => return,
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
         };
+
+        ptr.enter_serial = serial;
+        ptr.current_waygap_idx = current_waygap_idx;
+
+        let waygap = self.waygaps.get(current_waygap_idx as usize).unwrap();
+        for event in &*waygap.commands {
+            if let (InputEvent::Enter, cmd) = event {
+                shell_command(cmd);
+                break;
+            }
+        }
     }
 
     fn leave(&mut self, sender_id: ObjectId, _serial: u32, _surface: ObjectId) {
-        if let Some(ptr) = get_pointer(&mut self.seats, sender_id) {
-            if let Some(waygap) = self.waygaps.get(ptr.current_waygap as usize)
-            {
-                for event in waygap.commands.iter() {
-                    if let (InputEvent::Leave, cmd) = event {
-                        shell_command(cmd);
-                        break;
-                    }
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        if let Some(waygap) = self.waygaps.get(ptr.current_waygap_idx as usize)
+        {
+            for event in &*waygap.commands {
+                if let (InputEvent::Leave, cmd) = event {
+                    shell_command(cmd);
+                    break;
                 }
             }
-            ptr.current_waygap = u32::MAX;
         }
+        ptr.current_waygap_idx = u16::MAX;
     }
 
     fn motion(
@@ -708,11 +692,13 @@ impl wayland::wl_pointer::EvHandler for App {
         button: u32,
         state: wayland::wl_pointer::ButtonState,
     ) {
-        if let Some(ptr) = get_pointer(&mut self.seats, sender_id) {
-            ptr.button = match state {
-                wayland::wl_pointer::ButtonState::released => 0,
-                wayland::wl_pointer::ButtonState::pressed => button as u16,
-            }
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        ptr.button = match state {
+            wayland::wl_pointer::ButtonState::released => 0,
+            wayland::wl_pointer::ButtonState::pressed => button as u16,
         }
     }
 
@@ -723,12 +709,8 @@ impl wayland::wl_pointer::EvHandler for App {
         axis: wayland::wl_pointer::Axis,
         value: WlFixed,
     ) {
-        let ptr = match get_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(_waygap) => ptr,
-                None => return,
-            },
-            None => return,
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
         };
 
         ptr.axis = axis.into();
@@ -736,15 +718,15 @@ impl wayland::wl_pointer::EvHandler for App {
     }
 
     fn frame(&mut self, sender_id: ObjectId) {
-        let (ptr, waygap) = match get_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => match self.waygaps.get(ptr.current_waygap as usize) {
-                Some(waygap) => (ptr, waygap),
-                None => return,
-            },
-            None => return,
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+        let Some(waygap) = self.waygaps.get(ptr.current_waygap_idx as usize)
+        else {
+            return;
         };
 
-        for event in waygap.commands.iter() {
+        for event in &*waygap.commands {
             if let (InputEvent::Button(btn), cmd) = event
                 && *btn == ptr.button
             {
@@ -755,7 +737,7 @@ impl wayland::wl_pointer::EvHandler for App {
 
         if ptr.scroll <= -15.0 {
             ptr.scroll += 15.0;
-            for event in waygap.commands.iter() {
+            for event in &*waygap.commands {
                 if let (InputEvent::Scroll(scroll), cmd) = event
                     && scroll.on_axis(ptr.axis)
                     && !scroll.is_positive()
@@ -765,7 +747,7 @@ impl wayland::wl_pointer::EvHandler for App {
             }
         } else if ptr.scroll >= 15.0 {
             ptr.scroll -= 15.0;
-            for event in waygap.commands.iter() {
+            for event in &*waygap.commands {
                 if let (InputEvent::Scroll(scroll), cmd) = event
                     && scroll.on_axis(ptr.axis)
                     && scroll.is_positive()
@@ -776,7 +758,7 @@ impl wayland::wl_pointer::EvHandler for App {
         }
 
         if ptr.should_trigger_edge {
-            for event in waygap.commands.iter() {
+            for event in &*waygap.commands {
                 if let (InputEvent::Edge, cmd) = event {
                     shell_command(cmd);
                     break;
@@ -840,17 +822,16 @@ impl wayland::zwp_relative_pointer_v1::EvHandler for App {
         dx_unaccel: WlFixed,
         dy_unaccel: WlFixed,
     ) {
-        let ptr = match get_relative_pointer(&mut self.seats, sender_id) {
-            Some(ptr) => ptr,
-            None => return,
+        let Some(ptr) = get_relative_pointer(&mut self.seats, sender_id) else {
+            return;
         };
 
-        let waygap = match self.waygaps.get(ptr.current_waygap as usize) {
-            Some(waygap) => waygap,
-            None => return,
+        let Some(waygap) = self.waygaps.get(ptr.current_waygap_idx as usize)
+        else {
+            return;
         };
 
-        let time: u64 = ((utime_hi as u64) << 32) | (utime_lo as u64);
+        let time: u64 = (u64::from(utime_hi) << 32) | u64::from(utime_lo);
         let dt = time.saturating_sub(ptr.last_time);
 
         if dt > 400 {
@@ -901,8 +882,8 @@ impl wayland::zwp_relative_pointer_v1::EvHandler for App {
             }
         }
 
-        if ptr.pressure_x > waygap.activation_force as f64
-            || ptr.pressure_y > waygap.activation_force as f64
+        if ptr.pressure_x > f64::from(waygap.activation_force)
+            || ptr.pressure_y > f64::from(waygap.activation_force)
         {
             if time - ptr.last_trigger_time > 250000 {
                 ptr.should_trigger_edge = true;
@@ -988,7 +969,7 @@ impl wayland::zwlr_layer_surface_v1::EvHandler for App {
             if let Err(e) =
                 waygap.draw_frame(&mut self.backend, self.shm, &mut self.objman)
             {
-                log::error!("failed to draw frame: {e}")
+                log::error!("failed to draw frame: {e}");
             }
         }
     }

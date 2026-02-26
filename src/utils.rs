@@ -89,20 +89,19 @@ where
         let unix_addr = if socket_name.to_bytes().first() == Some(&b'/') {
             rustix::net::SocketAddrUnix::new(socket_name).unwrap()
         } else {
-            let mut socket_fullpath = match unsafe {
-                getenv(b"XDG_RUNTIME_DIR")
-            } {
-                Some(socket_path) => socket_path.to_bytes().to_smallvec(),
-                None => {
-                    use rustix::path::DecInt;
-                    log::warn!(
-                        "XDG_RUNTIME_DIR is not set! Defaulting to /run/user/UID"
-                    );
-                    let mut v = SmallVec::<[u8; 16]>::from_slice(b"/run/user/");
-                    let uid = rustix::process::getuid();
-                    v.extend_from_slice(DecInt::new(uid.as_raw()).as_bytes());
-                    v
-                }
+            let mut socket_fullpath = if let Some(socket_path) =
+                unsafe { getenv(b"XDG_RUNTIME_DIR") }
+            {
+                socket_path.to_bytes().to_smallvec()
+            } else {
+                use rustix::path::DecInt;
+                log::warn!(
+                    "XDG_RUNTIME_DIR is not set! Defaulting to /run/user/UID"
+                );
+                let mut v = SmallVec::<[u8; 16]>::from_slice(b"/run/user/");
+                let uid = rustix::process::getuid();
+                v.extend_from_slice(DecInt::new(uid.as_raw()).as_bytes());
+                v
             };
             socket_fullpath.push(b'/');
             socket_fullpath.extend_from_slice(socket_name.to_bytes_with_nul());
@@ -134,7 +133,7 @@ where
 /// therefore generating code with 2 unwraps and panic conditions, even though 1
 /// would suffice
 #[cold]
-fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
+const fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
     let mut fd: rustix::fd::RawFd = 0;
     let mut ptr = s.as_ptr();
 
@@ -223,7 +222,7 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
                     "unexpected argument '{}' found",
                     arg.to_str().unwrap()
                 );
-                help(1)
+                help(1);
             }
         }
         i += 1;
@@ -236,7 +235,7 @@ fn help(status: c_int) {
     log::info!("Usage: waygaps [OPTIONS]");
     log::info!("Options:");
     log::info!(
-        "-c, --config <CONFIG>  Config file path (default: ~/.config/waygaps/config.kdl)"
+        "-c, --config <CONFIG>  Config file path (default: ~/.config/waygaps/config.toml)"
     );
     log::info!("-p, --preview          Preview the gaps on your screen(s)");
     log::info!("-h, --help             Print help");

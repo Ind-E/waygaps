@@ -118,7 +118,7 @@ impl schemars::JsonSchema for InputEvent {
 }
 
 #[repr(u8)]
-#[derive(PartialEq, Debug, Clone, Copy, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ScrollDir {
@@ -130,7 +130,7 @@ pub enum ScrollDir {
 
 impl ScrollDir {
     #[inline]
-    pub fn on_axis(self, axis: Axis) -> bool {
+    pub const fn on_axis(self, axis: Axis) -> bool {
         matches!(self, ScrollDir::Left | ScrollDir::Right)
             && matches!(axis, Axis::Horizontal)
             || matches!(self, ScrollDir::Up | ScrollDir::Down)
@@ -138,7 +138,7 @@ impl ScrollDir {
     }
 
     #[inline]
-    pub fn is_positive(self) -> bool {
+    pub const fn is_positive(self) -> bool {
         matches!(self, ScrollDir::Right | ScrollDir::Down)
     }
 }
@@ -202,7 +202,7 @@ pub struct GapConfig {
 impl Default for GapConfig {
     fn default() -> Self {
         Self {
-            output: Default::default(),
+            output: Option::default(),
             anchor: default_anchor(),
             size: default_size(),
             margin: default_margin(),
@@ -328,25 +328,26 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
         };
 
         let mut path_buf = [0u8; 512];
-        let mut len = 0;
 
-        for &b in home.to_bytes() {
-            path_buf[len] = b;
-            len += 1;
+        let home_bytes = home.to_bytes();
+        let suffix = b"/.config/waygaps/config.toml";
+        let len = home_bytes.len() + suffix.len();
+
+        if len < path_buf.len() {
+            path_buf[..home_bytes.len()].copy_from_slice(home_bytes);
+            path_buf[home_bytes.len()..len].copy_from_slice(suffix);
+            path_buf[len] = 0; // null terminate
+
+            let path = unsafe {
+                core::ffi::CStr::from_bytes_with_nul_unchecked(
+                    &path_buf[..=len],
+                )
+            };
+            open_file(path)
+        } else {
+            log::error!("path too long");
+            origin::program::exit(1);
         }
-
-        for &b in b"/.config/waygaps/config.toml" {
-            path_buf[len] = b;
-            len += 1;
-        }
-
-        // null terminate
-        path_buf[len] = 0;
-        let path_buf = &path_buf[0..=len];
-
-        let path =
-            unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(path_buf) };
-        open_file(path)
     };
 
     let len = match fs::fstat(&fd) {

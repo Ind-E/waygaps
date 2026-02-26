@@ -297,7 +297,7 @@ pub struct Color {
 impl Color {
     #[inline]
     pub const fn new(a: u8, r: u8, g: u8, b: u8) -> Self {
-        Self { b, r, g, a }
+        Self { b, g, r, a }
     }
 
     #[inline]
@@ -313,16 +313,16 @@ impl core::fmt::Display for Color {
         write!(
             f,
             "{:02}{:02}{:02}{:02}",
-            self.r as u32 >> 24 & 0xFF,
-            self.g as u32 >> 16 & 0xFF,
-            self.b as u32 >> 8 & 0xFF,
-            self.a as u32 & 0xFF,
+            u32::from(self.r) >> 24 & 0xFF,
+            u32::from(self.g) >> 16 & 0xFF,
+            u32::from(self.b) >> 8 & 0xFF,
+            u32::from(self.a) & 0xFF,
         )
     }
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WaylandObject {
     Display,
     Registry,

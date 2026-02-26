@@ -36,12 +36,12 @@ pub struct Pointer {
     pub scroll: f64,
     pub axis: Axis,
 
-    pub current_waygap: u32,
+    pub current_waygap_idx: u16,
 }
 
 impl Pointer {
     #[inline]
-    pub fn new(id: ObjectId) -> Self {
+    pub const fn new(id: ObjectId) -> Self {
         Self {
             id,
             relative_pointer_id: None,
@@ -57,7 +57,7 @@ impl Pointer {
             scroll: 0.0,
             axis: Axis::Vertical,
 
-            current_waygap: u32::MAX,
+            current_waygap_idx: u16::MAX,
         }
     }
 }
@@ -65,17 +65,17 @@ impl Pointer {
 pub struct Seat {
     pub registry_name: u32,
 
-    pub wl_seat: ObjectId,
+    pub id: ObjectId,
 
     pub pointer: Option<Pointer>,
 }
 
 impl Seat {
     #[inline]
-    pub fn new(registry_name: u32, wl_seat: ObjectId) -> Self {
+    pub const fn new(registry_name: u32, wl_seat: ObjectId) -> Self {
         Self {
             registry_name,
-            wl_seat,
+            id: wl_seat,
             pointer: None,
         }
     }

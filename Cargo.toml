@@ -4,6 +4,11 @@ cargo-features = ["profile-rustflags"]
 name = "waygaps"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Ind-E/waygaps"
+description = "Configurable hot corners and hot edges for wayland"
+keywords = ["wayland"]
+categories = ["command-line-utilities", "no-std"]
 
 [features]
 schema = ["dep:schemars", "dep:serde_json"]

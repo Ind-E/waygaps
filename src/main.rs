@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use core::{
     mem::MaybeUninit,
     sync::atomic::{self, AtomicBool},
@@ -196,8 +197,8 @@ pub extern "C" fn origin_main(
         app.pending_outputs.push(PendingOutput {
             registry_name,
             id: wl_output,
-            name: <&str>::default(),
-            description: <&str>::default(),
+            name: Box::default(),
+            description: Box::default(),
         });
 
         wayland::wl_registry::req::bind(
@@ -303,8 +304,8 @@ pub extern "C" fn origin_main(
 struct PendingOutput {
     registry_name: u32,
     id: ObjectId,
-    name: &'static str,
-    description: &'static str,
+    name: Box<str>,
+    description: Box<str>,
 }
 
 struct App {
@@ -590,7 +591,10 @@ impl wayland::wl_output::EvHandler for App {
         let output = self.pending_outputs.swap_remove(index);
 
         for (cfg_name, cfg) in self.config.iter() {
-            if is_output_match(cfg.output.as_deref(), output.description) {
+            if is_output_match(
+                cfg.output.as_deref(),
+                output.description.as_ref(),
+            ) {
                 log::info!(
                     "opening config `{}` on output `{}`",
                     cfg_name,
@@ -618,8 +622,7 @@ impl wayland::wl_output::EvHandler for App {
         if let Some(out) =
             self.pending_outputs.iter_mut().find(|o| o.id == sender_id)
         {
-            let static_name = unsafe { core::mem::transmute(name) };
-            out.name = static_name;
+            out.name = Box::from(name);
         }
     }
 
@@ -627,10 +630,7 @@ impl wayland::wl_output::EvHandler for App {
         if let Some(out) =
             self.pending_outputs.iter_mut().find(|o| o.id == sender_id)
         {
-            // this probably doesn't segfault if more than output is connected
-            let static_description =
-                unsafe { core::mem::transmute(description) };
-            out.description = static_description;
+            out.description = Box::from(description);
         }
     }
 }

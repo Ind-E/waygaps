@@ -36,7 +36,7 @@ In that case, open an issue.
 
 
 ## Quickstart
-Copy the [example config](./example-config.toml) to `~/.config/waygaps/config.kdl`.
+Copy the [example config](./example-config.toml) to `~/.config/waygaps/config.toml`.
 Run `waygaps -p` while configuring to preview where the hot corners are, then setup a way
 to run `waygaps` at startup.
 
@@ -86,7 +86,7 @@ ignore-exclusive-zone = false
 # color used to preview this region when the -p flag is passed
 preview-color = { r = 128, g = 16, b = 16, a = 25 }
 
-# list of actions and corresponding command to run (in a bash shell)
+# list of actions and corresponding command to run (with sh)
 commands = [
   # triggers when pointer enters the region
   ["enter", "notify-send enter"],

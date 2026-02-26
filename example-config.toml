@@ -21,7 +21,7 @@ margin = 0
 # screen to trigger the 'edge' action (see below)
 activation-force = 25
 
-# list of actions and corresponding command to run (in a bash shell)
+# list of actions and corresponding command to run (with sh)
 commands = [
   ["enter", "notify-send enter"],
   ["leave", "notify-send leave"],

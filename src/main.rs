@@ -1054,15 +1054,14 @@ fn setup_signals() {
 fn shell_command(command: &core::ffi::CStr) {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => unsafe {
-            let args: [*const u8; 5] = [
-                c"env".as_ptr().cast(),
-                c"bash".as_ptr().cast(),
+            let args: [*const u8; 4] = [
+                c"sh".as_ptr().cast(),
                 c"-c".as_ptr().cast(),
                 command.as_ptr().cast(),
                 core::ptr::null(),
             ];
             let err = rustix::runtime::execve(
-                c"/usr/bin/env",
+                c"/bin/sh",
                 args.as_ptr(),
                 environ.cast(),
             );

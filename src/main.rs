@@ -324,6 +324,7 @@ struct App {
 }
 
 impl App {
+    #[inline]
     fn new(
         backend: waybackend::Waybackend,
         objman: objman::ObjectManager<WaylandObject>,
@@ -370,6 +371,7 @@ impl App {
 }
 
 // not a method on App to avoid borrowing shenanigans
+#[inline]
 fn create_waygap(
     backend: &mut Waybackend,
     objman: &mut ObjectManager<WaylandObject>,
@@ -927,6 +929,7 @@ fn get_pointer(seats: &mut [Seat], ptr_id: ObjectId) -> Option<&mut Pointer> {
     None
 }
 
+#[inline]
 fn get_relative_pointer(
     seats: &mut [Seat],
     relative_ptr_id: ObjectId,
@@ -1001,6 +1004,7 @@ fn set_exit() {
     EXIT.store(true, atomic::Ordering::Relaxed);
 }
 
+#[inline]
 fn should_exit() -> bool {
     EXIT.load(atomic::Ordering::Relaxed)
 }
@@ -1009,6 +1013,7 @@ extern "C" fn signal_handler(_signal: core::ffi::c_int) {
     set_exit();
 }
 
+#[inline]
 fn setup_signals() {
     use origin::signal::{
         Sigaction, SigactionFlags, Signal, sig_ign, sigaction,

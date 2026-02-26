@@ -38,6 +38,7 @@ pub struct WayGap {
 }
 
 impl WayGap {
+    #[inline]
     pub fn new(
         backend: &mut Waybackend,
         objman: &mut ObjectManager<WaylandObject>,

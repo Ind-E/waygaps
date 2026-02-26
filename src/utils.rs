@@ -53,6 +53,7 @@ pub unsafe fn getenv(env: &[u8]) -> Option<&CStr> {
     }
 }
 
+#[inline]
 pub fn connect<T>(display: T) -> (Waybackend, ObjectManager<T>, Receiver)
 where
     T: Copy + PartialEq,
@@ -151,7 +152,7 @@ fn parse_cstr_to_rawfd(s: &core::ffi::CStr) -> Option<rustix::fd::RawFd> {
     Some(fd)
 }
 
-#[cold]
+#[inline]
 pub fn is_output_match(pattern: Option<&str>, description: &str) -> bool {
     let Some(pattern) = pattern else {
         return true;
@@ -171,6 +172,7 @@ pub struct Args {
     pub config_path: Option<&'static CStr>,
 }
 
+#[inline]
 pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
     let mut args = Args {
         preview: false,
@@ -230,7 +232,6 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
     args
 }
 
-#[inline(always)]
 fn help(status: c_int) {
     log::info!("Usage: waygaps [OPTIONS]");
     log::info!("Options:");

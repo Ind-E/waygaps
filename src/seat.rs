@@ -40,6 +40,7 @@ pub struct Pointer {
 }
 
 impl Pointer {
+    #[inline]
     pub fn new(id: ObjectId) -> Self {
         Self {
             id,
@@ -70,6 +71,7 @@ pub struct Seat {
 }
 
 impl Seat {
+    #[inline]
     pub fn new(registry_name: u32, wl_seat: ObjectId) -> Self {
         Self {
             registry_name,

@@ -299,7 +299,6 @@ impl core::fmt::Display for zwlr_layer_shell_v1::Layer {
     }
 }
 
-#[inline(always)]
 fn open_file(path: &core::ffi::CStr) -> OwnedFd {
     match fs::open(path, fs::OFlags::RDONLY, fs::Mode::empty()) {
         Ok(fd) => {
@@ -316,6 +315,7 @@ fn open_file(path: &core::ffi::CStr) -> OwnedFd {
     }
 }
 
+#[inline]
 pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     let fd = if let Some(path) = config_path {
         open_file(path)

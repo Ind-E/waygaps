@@ -212,7 +212,7 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
                 } else {
                     log::error!(
                         "a value is required for '{} <CONFIG>' but none was supplied",
-                        arg.to_str().unwrap()
+                        arg.to_string_lossy()
                     );
                     origin::program::exit(-1);
                 }
@@ -220,7 +220,7 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
             _ => {
                 log::error!(
                     "unexpected argument '{}' found",
-                    arg.to_str().unwrap()
+                    arg.to_string_lossy()
                 );
                 help(1);
             }

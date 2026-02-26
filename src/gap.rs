@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, rc::Rc};
 
 use serde::Deserialize;
 use waybackend::{
@@ -15,7 +15,7 @@ use crate::{
 const NAMESPACE: &str = "waygaps";
 
 pub struct WayGap {
-    pub commands: &'static [(InputEvent, Box<core::ffi::CStr>)],
+    pub commands: Rc<[(InputEvent, Box<core::ffi::CStr>)]>,
 
     pub registry_name: u32,
     pub wl_surface: ObjectId,
@@ -162,9 +162,22 @@ impl WayGap {
             configured: false,
             redraw: false,
 
-            commands: unsafe {
-                core::mem::transmute(config.commands.as_slice())
-            },
+            #[cfg(not(feature = "schema"))]
+            commands: config.commands.clone(),
+            #[cfg(feature = "schema")]
+            commands: config
+                .commands
+                .iter()
+                .cloned()
+                .map(|(e, s)| {
+                    (
+                        e,
+                        alloc::ffi::CString::new(s.as_bytes())
+                            .unwrap()
+                            .into_boxed_c_str(),
+                    )
+                })
+                .collect(),
             preview_color: config.preview_color,
             activation_force: config.activation_force,
         })

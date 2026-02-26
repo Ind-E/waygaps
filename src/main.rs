@@ -51,9 +51,8 @@ impl talc::OomHandler for OomHandler {
     ) -> Result<(), ()> {
         // We need at least ~1KB for talc's metadata. We allocate twice that to
         // be sure. Besides that, we round our allocation up to the next
-        // group of 8KB, so that we need only 1 allocation in the average case,
-        // and use (hopefully) 2 pages of memory
-        let len = (layout.size() + 256).next_multiple_of(8192);
+        // group of 32KB, so that we need only 2 allocations in the average case
+        let len = (layout.size() + 256).next_multiple_of(2 << 13);
 
         // Note: as an optimization, we could use mremap on linux to extend
         // the allocation size "in_place", for a efficient realloc.
@@ -115,7 +114,7 @@ pub extern "C" fn origin_main(
         use rustix::fs::{Mode, OFlags};
         use schemars::schema_for;
 
-        let schema = schema_for!(Config);
+        let schema = schema_for!(crate::config::BTreeConfig);
         let json = serde_json::to_string_pretty(&schema).unwrap();
 
         const PATH: &'static str =
@@ -309,7 +308,7 @@ struct App {
     layer_shell: ObjectId,
     relative_ptr_mgr: ObjectId,
     waygaps: alloc::vec::Vec<WayGap>,
-    seats: alloc::vec::Vec<Seat>,
+    seats: SmallVec<[Seat; 1]>,
     pending_outputs: alloc::vec::Vec<PendingOutput>,
     config: Config,
 
@@ -340,7 +339,7 @@ impl App {
             layer_shell,
             relative_ptr_mgr,
             waygaps: alloc::vec::Vec::new(),
-            seats: alloc::vec::Vec::new(),
+            seats: SmallVec::new(),
             pending_outputs: alloc::vec::Vec::new(),
             config,
             preview,

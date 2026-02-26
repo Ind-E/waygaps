@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use alloc::collections::btree_map::BTreeMap;
+use alloc::rc::Rc;
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{self};
@@ -11,12 +11,16 @@ use crate::seat::Axis;
 use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
 
+pub struct Config(Box<[(Box<str>, GapConfig)]>);
+
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
-pub struct Config(pub BTreeMap<Box<str>, GapConfig>);
+pub struct BTreeConfig(
+    alloc::collections::btree_map::BTreeMap<Box<str>, GapConfig>,
+);
 
 impl core::ops::Deref for Config {
-    type Target = BTreeMap<Box<str>, GapConfig>;
+    type Target = Box<[(Box<str>, GapConfig)]>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -194,9 +198,9 @@ pub struct GapConfig {
     pub preview_color: Color,
 
     #[cfg(feature = "schema")]
-    pub commands: alloc::vec::Vec<(InputEvent, Box<str>)>,
+    pub commands: Rc<[(InputEvent, Box<str>)]>,
     #[cfg(not(feature = "schema"))]
-    pub commands: alloc::vec::Vec<(InputEvent, Box<core::ffi::CStr>)>,
+    pub commands: Rc<[(InputEvent, Box<core::ffi::CStr>)]>,
 }
 
 impl Default for GapConfig {
@@ -322,32 +326,26 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     } else {
         let home = unsafe {
             getenv(b"HOME").unwrap_or_else(|| {
-        log::warn!("HOME environment variable is not set, searching for config in current directory");
-        c"."
-    })
+                log::warn!("HOME environment variable is not set, searching for config in current directory");
+                c"."
+            })
         };
-
-        let mut path_buf = [0u8; 512];
 
         let home_bytes = home.to_bytes();
         let suffix = b"/.config/waygaps/config.toml";
-        let len = home_bytes.len() + suffix.len();
 
-        if len < path_buf.len() {
-            path_buf[..home_bytes.len()].copy_from_slice(home_bytes);
-            path_buf[home_bytes.len()..len].copy_from_slice(suffix);
-            path_buf[len] = 0; // null terminate
+        let mut path_buf =
+            alloc::vec::Vec::with_capacity(home_bytes.len() + suffix.len() + 1);
 
-            let path = unsafe {
-                core::ffi::CStr::from_bytes_with_nul_unchecked(
-                    &path_buf[..=len],
-                )
-            };
-            open_file(path)
-        } else {
-            log::error!("path too long");
-            origin::program::exit(1);
-        }
+        path_buf.extend_from_slice(home_bytes);
+        path_buf.extend_from_slice(suffix);
+        path_buf.push(0); // null terminate
+
+        let path = unsafe {
+            core::ffi::CStr::from_bytes_with_nul_unchecked(&path_buf)
+        };
+
+        open_file(path)
     };
 
     let len = match fs::fstat(&fd) {
@@ -389,8 +387,11 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
             }
         };
 
-        let config = match toml::from_str::<Config>(toml_str) {
-            Ok(config) => config,
+        let config = match toml::from_str::<
+            alloc::collections::BTreeMap<Box<str>, GapConfig>,
+        >(toml_str)
+        {
+            Ok(config) => Config(config.into_iter().collect()),
             Err(e) => {
                 log::error!("Failed to parse TOML config:\n{e}");
                 unsafe {
@@ -424,8 +425,8 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
             }
         };
 
-        match toml::from_str::<Config>(toml_str) {
-            Ok(config) => config,
+        match toml::from_str::<BTreeConfig>(toml_str) {
+            Ok(config) => Config(config.0.into_iter().collect()),
             Err(e) => {
                 log::error!("Failed to parse TOML config:\n{e}");
                 origin::program::exit(1);

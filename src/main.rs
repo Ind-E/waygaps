@@ -21,7 +21,7 @@ use waybackend::{
 use crate::{
     config::{Anchor, Config, GapConfig, InputEvent, read_config},
     gap::{WayGap, WaylandObject},
-    seat::{Pointer, Seat},
+    seat::{AxisSource, Pointer, Seat},
     utils::{is_output_match, parse_args},
 };
 
@@ -698,7 +698,7 @@ impl wayland::wl_pointer::EvHandler for App {
         ptr.button = match state {
             wayland::wl_pointer::ButtonState::released => 0,
             wayland::wl_pointer::ButtonState::pressed => button as u16,
-        }
+        };
     }
 
     fn axis(
@@ -713,7 +713,12 @@ impl wayland::wl_pointer::EvHandler for App {
         };
 
         ptr.axis = axis.into();
-        ptr.scroll += f64::from(value);
+
+        let value = f64::from(value);
+        if ptr.scroll.signum() != value.signum() {
+            ptr.scroll = 0.0;
+        }
+        ptr.scroll += value;
     }
 
     fn frame(&mut self, sender_id: ObjectId) {
@@ -734,27 +739,58 @@ impl wayland::wl_pointer::EvHandler for App {
         }
         ptr.button = 0;
 
-        if ptr.scroll <= -15.0 {
-            ptr.scroll += 15.0;
-            for event in &*waygap.commands {
-                if let (InputEvent::Scroll(scroll), cmd) = event
-                    && scroll.on_axis(ptr.axis)
-                    && !scroll.is_positive()
-                {
-                    shell_command(cmd);
+        match ptr.source {
+            AxisSource::Wheel | AxisSource::WheelTilt => {
+                ptr.scroll = 0.0;
+                if ptr.scroll120 <= -120 {
+                    ptr.scroll120 += 120;
+                    for event in &*waygap.commands {
+                        if let (InputEvent::Scroll(scroll), cmd) = event
+                            && scroll.on_axis(ptr.axis)
+                            && !scroll.is_positive()
+                        {
+                            shell_command(cmd);
+                        }
+                    }
+                } else if ptr.scroll120 >= 120 {
+                    ptr.scroll120 -= 120;
+                    for event in &*waygap.commands {
+                        if let (InputEvent::Scroll(scroll), cmd) = event
+                            && scroll.on_axis(ptr.axis)
+                            && scroll.is_positive()
+                        {
+                            shell_command(cmd);
+                        }
+                    }
                 }
             }
-        } else if ptr.scroll >= 15.0 {
-            ptr.scroll -= 15.0;
-            for event in &*waygap.commands {
-                if let (InputEvent::Scroll(scroll), cmd) = event
-                    && scroll.on_axis(ptr.axis)
-                    && scroll.is_positive()
-                {
-                    shell_command(cmd);
+            AxisSource::Finger | AxisSource::Continuous => {
+                ptr.scroll120 = 0;
+                if ptr.scroll <= -15.0 {
+                    ptr.scroll += 15.0;
+                    for event in &*waygap.commands {
+                        if let (InputEvent::Scroll(scroll), cmd) = event
+                            && scroll.on_axis(ptr.axis)
+                            && !scroll.is_positive()
+                        {
+                            shell_command(cmd);
+                        }
+                    }
+                } else if ptr.scroll >= 15.0 {
+                    ptr.scroll -= 15.0;
+                    for event in &*waygap.commands {
+                        if let (InputEvent::Scroll(scroll), cmd) = event
+                            && scroll.on_axis(ptr.axis)
+                            && scroll.is_positive()
+                        {
+                            shell_command(cmd);
+                        }
+                    }
                 }
             }
+            AxisSource::None => (),
         }
+        ptr.source = AxisSource::None;
 
         if ptr.should_trigger_edge {
             for event in &*waygap.commands {
@@ -769,35 +805,55 @@ impl wayland::wl_pointer::EvHandler for App {
 
     fn axis_source(
         &mut self,
-        _sender_id: ObjectId,
-        _axis_source: wayland::wl_pointer::AxisSource,
+        sender_id: ObjectId,
+        axis_source: wayland::wl_pointer::AxisSource,
     ) {
-        // NoOp
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        ptr.source = axis_source.into();
     }
 
     fn axis_stop(
         &mut self,
-        _sender_id: ObjectId,
+        sender_id: ObjectId,
         _time: u32,
         _axis: wayland::wl_pointer::Axis,
     ) {
-        // NoOp
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        ptr.scroll = 0.0;
     }
 
     fn axis_discrete(
         &mut self,
-        _sender_id: ObjectId,
-        _axis: wayland::wl_pointer::Axis,
-        _discrete: i32,
+        sender_id: ObjectId,
+        axis: wayland::wl_pointer::Axis,
+        discrete: i32,
     ) {
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        ptr.scroll120 += discrete * 120;
+        ptr.axis = axis.into();
     }
 
     fn axis_value120(
         &mut self,
-        _sender_id: ObjectId,
-        _axis: wayland::wl_pointer::Axis,
-        _value120: i32,
+        sender_id: ObjectId,
+        axis: wayland::wl_pointer::Axis,
+        value120: i32,
     ) {
+        let Some(ptr) = get_pointer(&mut self.seats, sender_id) else {
+            return;
+        };
+
+        ptr.scroll120 += value120;
+        ptr.axis = axis.into();
     }
 
     fn axis_relative_direction(

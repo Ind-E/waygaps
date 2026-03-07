@@ -15,7 +15,8 @@ size = 10
 
 # only affects edges
 # useful to avoid edges and corners overlapping
-margin = 0
+start-margin = 0
+end-margin = 0
 
 # affects how much you have to move the mouse beyond the edge of the
 # screen to trigger the 'edge' action (see below)

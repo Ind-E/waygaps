@@ -7,7 +7,6 @@ use waybackend::{
 use wayland::zwlr_layer_surface_v1::Anchor as wlrAnchor;
 
 use crate::{
-    BUFFER_SCALE,
     config::{Anchor, GapConfig, InputEvent},
     wayland,
 };
@@ -66,7 +65,7 @@ impl WayGap {
             NAMESPACE,
         )?;
 
-        let size = config.size * BUFFER_SCALE;
+        let size = config.size;
 
         let (anchor, width, height) = match config.anchor {
             Anchor::TopLeft => (wlrAnchor::LEFT | wlrAnchor::TOP, size, size),
@@ -107,10 +106,10 @@ impl WayGap {
 
         let (top, right, bottom, left) = match config.anchor {
             Anchor::Left | Anchor::Right => {
-                (config.margin, 0, config.margin, 0)
+                (config.start_margin, 0, config.end_margin, 0)
             }
             Anchor::Top | Anchor::Bottom => {
-                (0, config.margin, 0, config.margin)
+                (0, config.end_margin, 0, config.start_margin)
             }
             _ => (0, 0, 0, 0),
         };
@@ -212,11 +211,6 @@ impl WayGap {
 
         wayland::wl_shm_pool::req::destroy(backend, pool)?;
 
-        wayland::wl_surface::req::set_buffer_scale(
-            backend,
-            self.wl_surface,
-            super::BUFFER_SCALE as i32,
-        )?;
         wayland::wl_surface::req::attach(
             backend,
             self.wl_surface,

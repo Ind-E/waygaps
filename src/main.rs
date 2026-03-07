@@ -32,8 +32,6 @@ mod seat;
 mod utils;
 mod wayland;
 
-const BUFFER_SCALE: u32 = 1;
-
 #[global_allocator]
 static GLOBAL_ALLOCATOR: talc::Talck<
     talc::locking::AssumeUnlockable,
@@ -989,9 +987,6 @@ impl wayland::zwlr_layer_surface_v1::EvHandler for App {
         width: u32,
         height: u32,
     ) {
-        let width = width * BUFFER_SCALE;
-        let height = height * BUFFER_SCALE;
-
         wayland::zwlr_layer_surface_v1::req::ack_configure(
             &mut self.backend,
             sender_id,

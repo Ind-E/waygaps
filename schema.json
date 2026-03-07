@@ -83,17 +83,17 @@
             ]
           }
         },
+        "end-margin": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
         "ignore-exclusive-zone": {
           "type": "boolean",
           "default": true
         },
         "layer": {
           "$ref": "#/$defs/Layer"
-        },
-        "margin": {
-          "type": "integer",
-          "format": "int32",
-          "default": 0
         },
         "output": {
           "type": [
@@ -110,6 +110,11 @@
           "format": "uint32",
           "default": 10,
           "minimum": 0
+        },
+        "start-margin": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
         }
       }
     },

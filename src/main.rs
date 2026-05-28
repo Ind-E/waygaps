@@ -12,6 +12,7 @@ use core::{
 
 use rustix::{self, event::epoll};
 use smallvec::SmallVec;
+use spinning_top::RawSpinlock;
 use waybackend::{
     Waybackend,
     objman::{self, ObjectManager},
@@ -33,23 +34,21 @@ mod utils;
 mod wayland;
 
 #[global_allocator]
-static GLOBAL_ALLOCATOR: talc::Talck<
-    talc::locking::AssumeUnlockable,
-    OomHandler,
-> = talc::Talc::new(OomHandler).lock();
+static TALC: talc::TalcLock<RawSpinlock, OomHandler> =
+    talc::TalcLock::<RawSpinlock, _>::new(OomHandler);
 
+#[derive(Debug)]
 struct OomHandler;
 
-impl talc::OomHandler for OomHandler {
+unsafe impl talc::source::Source for OomHandler {
     #[cold]
     #[inline(never)]
-    fn handle_oom(
-        talc: &mut talc::Talc<Self>,
+    fn acquire<B: talc::base::binning::Binning>(
+        talc: &mut talc::base::Talc<Self, B>,
         layout: core::alloc::Layout,
     ) -> Result<(), ()> {
-        // We need at least ~1KB for talc's metadata. We allocate twice that to
-        // be sure. Besides that, we round our allocation up to the next
-        // group of 32KB, so that we need only 2 allocations in the average case
+        // We round our allocation up to the next group of 32KB,
+        // so that we need only 2 allocations in the average case
         let len = (layout.size() + 256).next_multiple_of(2 << 13);
 
         // Note: as an optimization, we could use mremap on linux to extend
@@ -68,10 +67,7 @@ impl talc::OomHandler for OomHandler {
 
         match ptr {
             Ok(ptr) => {
-                unsafe {
-                    talc.claim(talc::Span::from_base_size(ptr.cast(), len))?
-                };
-                log::debug!("new allocation of size: {len}");
+                unsafe { talc.claim(ptr.cast(), len).unwrap() };
                 Ok(())
             }
             _ => Err(()),

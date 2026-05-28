@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 #![feature(cstr_display)]
+#![allow(internal_features)]
+#![feature(lang_items)]
 
 extern crate alloc;
 
@@ -32,6 +34,9 @@ mod log;
 mod seat;
 mod utils;
 mod wayland;
+
+#[lang = "eh_personality"]
+extern "C" fn eh_personality() {}
 
 #[global_allocator]
 static TALC: talc::TalcLock<RawSpinlock, OomHandler> =

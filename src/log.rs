@@ -118,7 +118,7 @@ macro_rules! _fatal {
     }
 }
 
-pub use _debug as debug;
+// pub use _debug as debug;
 pub use _error as error;
 pub use _fatal as fatal;
 pub use _info as info;

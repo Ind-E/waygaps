@@ -62,7 +62,6 @@
             ./build.rs
             ./Cargo.toml
             ./Cargo.lock
-            ./.cargo/config.toml
             ./protocols
           ];
         };

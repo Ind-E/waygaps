@@ -5,95 +5,111 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
     {
+      self,
       nixpkgs,
       rust-overlay,
+      crane,
       ...
     }:
     let
-      inherit (nixpkgs) lib;
-
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ (import rust-overlay) ];
-      };
-
-      commonNativeBuildInputs = with pkgs; [
-        pkg-config
+      inherit (nixpkgs.lib) genAttrs getExe fileset;
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
       ];
 
-      commonBuildInputs = with pkgs; [
-        wayland-protocols
-        wayland-scanner
-      ];
-
-      rust-toolchain = pkgs.rust-bin.nightly.latest.default.override {
-        extensions = [ "rust-src" ];
-      };
-
-      rust-toolchain-dev = rust-toolchain.override {
-        extensions = [
-          "rust-src"
-          "rust-analyzer"
-        ];
-      };
-
-      rustPlatform = pkgs.makeRustPlatform {
-        rustc = rust-toolchain;
-        cargo = rust-toolchain;
-      };
-
-      Cargo.toml = (fromTOML (builtins.readFile ./Cargo.toml)).package;
-
-      waygaps = rustPlatform.buildRustPackage {
-        pname = Cargo.toml.name;
-        inherit (Cargo.toml) version;
-
-        strictDeps = true;
-
-        src = lib.fileset.toSource {
-          root = ./.;
-          fileset = lib.fileset.unions [
-            ./src
-            ./build.rs
-            ./Cargo.toml
-            ./Cargo.lock
-            ./protocols
-          ];
-        };
-
-        doCheck = false;
-
-        cargoLock = {
-          lockFile = ./Cargo.lock;
-        };
-
-        nativeBuildInputs = commonNativeBuildInputs;
-        buildInputs = commonBuildInputs;
-
-        meta = {
-          platforms = [ system ];
-        };
-      };
-
+      forEachSystem =
+        fn:
+        genAttrs systems (
+          system:
+          fn {
+            pkgs = import nixpkgs {
+              inherit system;
+              overlays = [ (import rust-overlay) ];
+            };
+            inherit system;
+          }
+        );
     in
     {
-      devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = commonNativeBuildInputs ++ [ rust-toolchain-dev ];
-        buildInputs = commonBuildInputs;
-      };
+      packages = forEachSystem (
+        { pkgs, ... }:
+        let
+          rustToolchain = pkgs.rust-bin.nightly.latest.default;
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+          commonArgs = {
+            src = fileset.toSource {
+              root = ./.;
+              fileset = fileset.unions [
+                ./src
+                ./build.rs
+                ./Cargo.toml
+                ./Cargo.lock
+                ./protocols
+              ];
+            };
+            strictDeps = true;
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+            ];
 
-      packages.${system} = {
-        inherit waygaps;
-        default = waygaps;
-      };
+            buildInputs = with pkgs; [
+              wayland-scanner
+              wayland-protocols
+            ];
 
-      overlays.default = final: _: {
-        inherit waygaps;
-      };
+          };
+        in
+        {
+          default = craneLib.buildPackage (
+            commonArgs
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              doCheck = false;
+              meta = {
+                mainProgram = "waygaps";
+              };
+            }
+          );
+        }
+      );
+
+      apps = forEachSystem (
+        { system, ... }: {
+          default = {
+            type = "app";
+            program = getExe self.packages.${system}.default;
+          };
+        }
+      );
+
+      checks = forEachSystem (
+        { system, ... }: {
+          inherit (self.packages.${system}) default;
+        }
+      );
+
+      devShells = forEachSystem (
+        { pkgs, system }:
+        let
+          rustDevToolchain = pkgs.rust-bin.nightly.latest.default.override {
+            extensions = [
+              "rust-src"
+              "rust-analyzer"
+            ];
+          };
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustDevToolchain;
+        in
+        {
+          default = craneLib.devShell {
+            checks = self.checks.${system};
+          };
+        }
+      );
     };
 }

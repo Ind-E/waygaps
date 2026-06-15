@@ -325,6 +325,9 @@ fn open_file(path: &core::ffi::CStr) -> OwnedFd {
 pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     let fd = if let Some(path) = config_path {
         open_file(path)
+    } else if let Some(xdg_config_home) = unsafe { getenv(b"XDG_CONFIG_HOME") }
+    {
+        open_file(xdg_config_home)
     } else {
         let home = unsafe {
             getenv(b"HOME").unwrap_or_else(|| {
@@ -343,11 +346,10 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
         path_buf.extend_from_slice(suffix);
         path_buf.push(0); // null terminate
 
-        let path = unsafe {
+        let home_path = unsafe {
             core::ffi::CStr::from_bytes_with_nul_unchecked(&path_buf)
         };
-
-        open_file(path)
+        open_file(home_path)
     };
 
     let len = match fs::fstat(&fd) {

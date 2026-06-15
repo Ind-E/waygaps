@@ -6,10 +6,10 @@ use rustix::fs::{self};
 use serde::Deserialize;
 
 use crate::gap::Color;
-use crate::log;
 use crate::seat::Axis;
 use crate::utils::getenv;
 use crate::wayland::zwlr_layer_shell_v1;
+use crate::{log, println};
 
 pub struct Config(Box<[(Box<str>, GapConfig)]>);
 
@@ -314,6 +314,10 @@ fn open_file(path: &core::ffi::CStr) -> OwnedFd {
         Err(e) => {
             log::error!(
                 "error opening config file at `{}`: {e}",
+                path.display()
+            );
+            println!(
+                "          to create the example config, run `waygaps --print-example-config > {}`",
                 path.display()
             );
             origin::program::exit(1);

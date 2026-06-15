@@ -51,6 +51,7 @@
                 ./Cargo.toml
                 ./Cargo.lock
                 ./protocols
+                ./example-config.toml
               ];
             };
             strictDeps = true;

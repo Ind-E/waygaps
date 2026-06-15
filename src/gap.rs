@@ -37,7 +37,6 @@ pub struct WayGap {
 }
 
 impl WayGap {
-    #[inline]
     pub fn new(
         backend: &mut Waybackend,
         objman: &mut ObjectManager<WaylandObject>,
@@ -232,7 +231,6 @@ impl WayGap {
     }
 
     /// Size is given in pixels
-    #[inline]
     pub fn expand_shm(&mut self, size: u32) {
         if size * 4 > self.bufsize {
             rustix::io::retry_on_intr(|| {
@@ -243,7 +241,6 @@ impl WayGap {
         }
     }
 
-    #[inline]
     pub fn draw_preview(&mut self) {
         let mmap =
             MmappedSlice::new(&mut self.shm, self.bufsize as usize, 0).unwrap();
@@ -260,7 +257,6 @@ impl WayGap {
     }
 }
 
-#[inline]
 fn bg(
     canvas: &mut [u32],
     x1: u32,

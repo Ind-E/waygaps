@@ -8,6 +8,8 @@ use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
 use crate::log;
 use crate::println;
 
+const EXAMPLE_CONFIG: &str = include_str!("../example-config.toml");
+
 /// Manual getenv implementation from an extern environ variable.
 ///
 /// Note: this is marked as `#[inline(never)]` and `#[cold]` because this
@@ -63,7 +65,6 @@ where
     use rustix::net::AddressFamily;
 
     if let Some(txt) = unsafe { getenv(b"WAYLAND_SOCKET") } {
-        // We should connect to the provided WAYLAND_SOCKET
         let fd = parse_cstr_to_rawfd(txt)
             .expect("file descriptor in WAYLAND_SOCKET is not a number");
 
@@ -172,7 +173,6 @@ pub struct Args {
     pub config_path: Option<&'static CStr>,
 }
 
-#[inline]
 pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
     let mut args = Args {
         preview: false,
@@ -190,18 +190,19 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
             continue;
         }
 
-        // 2. Wrap the pointer in a &CStr (Zero Allocation)
         let arg = unsafe { CStr::from_ptr(ptr) };
 
         match arg.to_bytes() {
-            b"-p" | b"--preview" => {
-                args.preview = true;
-            }
+            b"-p" | b"--preview" => args.preview = true,
             b"-v" | b"--version" => {
                 println!("waygaps v{}", env!("CARGO_PKG_VERSION"));
                 origin::program::exit(0);
             }
             b"-h" | b"--help" => help(0),
+            b"--print-example-config" => {
+                println!("{}", EXAMPLE_CONFIG);
+                origin::program::exit(0);
+            }
             b"-c" | b"--config" => {
                 if i + 1 < argv_slice.len() {
                     let path_ptr = argv_slice[i + 1];
@@ -232,14 +233,14 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
     args
 }
 
+#[rustfmt::skip]
 fn help(status: c_int) {
     println!("Usage: waygaps [OPTIONS]");
     println!("Options:");
-    println!(
-        "  -c, --config <CONFIG>  Path to config file (default: `$XDG_CONFIG_HOME/waygaps/config.toml`)"
-    );
-    println!("  -p, --preview          Preview the gaps on your screen(s)");
-    println!("  -h, --help             Print help");
-    println!("  -v, --version          Print version");
+    println!("  -c, --config <CONFIG>       Path to config file (default: `$XDG_CONFIG_HOME/waygaps/config.toml`)");
+    println!("  -p, --preview               Preview the gaps on your screen(s)");
+    println!("      --print-example-config  Print the example configuration to stdout");
+    println!("  -h, --help                  Print help");
+    println!("  -v, --version               Print version");
     origin::program::exit(status);
 }

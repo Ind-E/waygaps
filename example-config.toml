@@ -13,7 +13,7 @@ size = 10
 # defaults to all outputs if not included
 # output "eDP-1"
 
-# only affects edges
+# only affect edges
 # useful to avoid edges and corners overlapping
 start-margin = 0
 end-margin = 0
@@ -40,8 +40,8 @@ commands = [
   ["mouse-right", "notify-send 'right click'"],
   ["mouse-middle", "notify-send 'middle click'"],
 
-  # for extra mouse buttons, use their input event codes
-  ["mouse-274", "notify-send 'back button'"],
+  # for extra mouse buttons, use their input event codes (can be found with wev)
+  ["mouse-275", "notify-send 'back button'"],
 ]
 
 

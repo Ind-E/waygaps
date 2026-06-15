@@ -52,15 +52,8 @@ unsafe impl talc::source::Source for OomHandler {
         talc: &mut talc::base::Talc<Self, B>,
         layout: core::alloc::Layout,
     ) -> Result<(), ()> {
-        // We round our allocation up to the next group of 32KB,
-        // so that we need only 2 allocations in the average case
-        let len = (layout.size() + 256).next_multiple_of(2 << 13);
+        let len = (layout.size() + 256).next_multiple_of(4096);
 
-        // Note: as an optimization, we could use mremap on linux to extend
-        // the allocation size "in_place", for a efficient realloc.
-        // However, by not supporting mremap, we do not need to keep track
-        // of the last allocations's ptr and size. Because we are allocating a
-        // lot of data every time, this ends up winning in the end
         let ptr = unsafe {
             rustix::mm::mmap_anonymous(
                 core::ptr::null_mut(),
@@ -964,7 +957,6 @@ fn get_pointer(seats: &mut [Seat], ptr_id: ObjectId) -> Option<&mut Pointer> {
     None
 }
 
-#[inline]
 fn get_relative_pointer(
     seats: &mut [Seat],
     relative_ptr_id: ObjectId,

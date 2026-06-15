@@ -97,7 +97,6 @@ pub struct Seat {
 }
 
 impl Seat {
-    #[inline]
     pub const fn new(registry_name: u32, wl_seat: ObjectId) -> Self {
         Self {
             registry_name,

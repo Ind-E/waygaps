@@ -321,7 +321,6 @@ fn open_file(path: &core::ffi::CStr) -> OwnedFd {
     }
 }
 
-#[inline]
 pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     let fd = if let Some(path) = config_path {
         open_file(path)
@@ -331,8 +330,8 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
     } else {
         let home = unsafe {
             getenv(b"HOME").unwrap_or_else(|| {
-                log::warn!("HOME environment variable is not set, searching for config in current directory");
-                c"."
+                log::fatal!("HOME environment variable is not set, try passing the config path with -c");
+                panic!()
             })
         };
 
@@ -360,81 +359,34 @@ pub fn read_config(config_path: Option<&'static core::ffi::CStr>) -> Config {
         }
     };
 
-    if len > 4096 {
-        log::warn!("config file is large, using mmap");
-        let ptr = unsafe {
-            use rustix::mm;
-            match mm::mmap(
-                core::ptr::null_mut(),
-                len,
-                mm::ProtFlags::READ,
-                mm::MapFlags::PRIVATE,
-                fd,
-                0,
-            ) {
-                Ok(mmap_ptr) => mmap_ptr,
-                Err(e) => {
-                    log::error!("memmap failed: {e}");
-                    origin::program::exit(1);
-                }
-            }
-        };
-
-        let mmap =
-            unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
-
-        let toml_str = match str::from_utf8(mmap) {
-            Ok(s) => s,
+    let mut buffer = alloc::vec![0u8; len];
+    let mut read_total = 0;
+    while read_total < len {
+        match rustix::io::read(&fd, &mut buffer[read_total..]) {
+            Ok(0) => break,
+            Ok(n) => read_total += n,
+            Err(rustix::io::Errno::INTR) => continue,
             Err(e) => {
-                log::error!("Config file is not valid UTF-8: {e}");
-                origin::program::exit(1);
-            }
-        };
-
-        let config = match toml::from_str::<
-            alloc::collections::BTreeMap<Box<str>, GapConfig>,
-        >(toml_str)
-        {
-            Ok(config) => Config(config.into_iter().collect()),
-            Err(e) => {
-                log::error!("Failed to parse TOML config:\n{e}");
-                unsafe {
-                    let _ = rustix::mm::munmap(ptr, len);
-                }
-                origin::program::exit(1);
-            }
-        };
-
-        unsafe {
-            let _ = rustix::mm::munmap(ptr, len);
-        }
-
-        config
-    } else {
-        let mut buffer = [0u8; 4096];
-
-        let bytes_read = match rustix::io::read(&fd, &mut buffer) {
-            Ok(b) => b,
-            Err(e) => {
-                log::error!("Failed to read config file: {e}");
-                origin::program::exit(1);
-            }
-        };
-
-        let toml_str = match str::from_utf8(&buffer[..bytes_read]) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("Config file is not valid UTF-8: {e}");
-                origin::program::exit(1);
-            }
-        };
-
-        match toml::from_str::<BTreeConfig>(toml_str) {
-            Ok(config) => Config(config.0.into_iter().collect()),
-            Err(e) => {
-                log::error!("Failed to parse TOML config:\n{e}");
+                log::error!("Read error: {e}");
                 origin::program::exit(1);
             }
         }
     }
+
+    let toml_str = match str::from_utf8(&buffer) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Config file is not valid UTF-8: {e}");
+            origin::program::exit(1);
+        }
+    };
+
+    let config: Config = match toml::from_str::<BTreeConfig>(toml_str) {
+        Ok(config) => Config(config.0.into_iter().collect()),
+        Err(e) => {
+            log::error!("Failed to parse TOML config:\n{e}");
+            origin::program::exit(1);
+        }
+    };
+    config
 }

@@ -6,6 +6,7 @@ use smallvec::ToSmallVec as _;
 use waybackend::{Waybackend, objman::ObjectManager, wire::Receiver};
 
 use crate::log;
+use crate::println;
 
 /// Manual getenv implementation from an extern environ variable.
 ///
@@ -197,7 +198,7 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
                 args.preview = true;
             }
             b"-v" | b"--version" => {
-                log::info!("waygaps v{}", env!("CARGO_PKG_VERSION"));
+                println!("waygaps v{}", env!("CARGO_PKG_VERSION"));
                 origin::program::exit(0);
             }
             b"-h" | b"--help" => help(0),
@@ -232,13 +233,13 @@ pub fn parse_args(argc: c_int, argv: *const *const i8) -> Args {
 }
 
 fn help(status: c_int) {
-    log::info!("Usage: waygaps [OPTIONS]");
-    log::info!("Options:");
-    log::info!(
-        "-c, --config <CONFIG>  Config file path (default: ~/.config/waygaps/config.toml)"
+    println!("Usage: waygaps [OPTIONS]");
+    println!("Options:");
+    println!(
+        "  -c, --config <CONFIG>  Path to config file (default: `$XDG_CONFIG_HOME/waygaps/config.toml`)"
     );
-    log::info!("-p, --preview          Preview the gaps on your screen(s)");
-    log::info!("-h, --help             Print help");
-    log::info!("-v, --version          Print version");
+    println!("  -p, --preview          Preview the gaps on your screen(s)");
+    println!("  -h, --help             Print help");
+    println!("  -v, --version          Print version");
     origin::program::exit(status);
 }

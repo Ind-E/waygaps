@@ -856,6 +856,15 @@ impl wayland::wl_pointer::EvHandler for App {
     ) {
         // NoOp
     }
+
+    fn warp(
+        &mut self,
+        _sender_id: ObjectId,
+        _surface_x: WlFixed,
+        _surface_y: WlFixed,
+    ) {
+        // NoOp
+    }
 }
 
 impl wayland::zwp_relative_pointer_v1::EvHandler for App {
